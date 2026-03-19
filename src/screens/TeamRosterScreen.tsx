@@ -13,7 +13,7 @@ import {
   Alert,
 } from 'react-native';
 import { Player } from '../models/Player';
-import { openDB, getPlayers, addPlayerDB, deletePlayerDB, updatePlayerDB } from '../database';
+  import { getPlayers, addPlayerDB, deletePlayerDB, updatePlayerDB } from '../database';
 import { useNavigation, CompositeNavigationProp } from '@react-navigation/native';
 import { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -71,7 +71,7 @@ const TeamRosterScreen = () => {
 
   useEffect(() => {
     const unsubscribe = navigation.addListener('focus', () => {
-      openDB().then(() => loadPlayers());
+      loadPlayers();
     });
     return unsubscribe;
   }, [navigation, loadPlayers]);
