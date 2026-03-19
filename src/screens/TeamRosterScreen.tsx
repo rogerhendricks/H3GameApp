@@ -11,6 +11,7 @@ import {
   Platform,
   Pressable,
   Alert,
+  ScrollView,
 } from 'react-native';
 import { Player } from '../models/Player';
   import { getPlayers, addPlayerDB, deletePlayerDB, updatePlayerDB } from '../database';
@@ -34,6 +35,230 @@ type TeamRosterScreenNavigationProp = CompositeNavigationProp<
   NativeStackNavigationProp<RootStackParamList, 'TeamRoster'>,
   BottomTabNavigationProp<RootTabParamList>
 >;
+
+// ── Position data ─────────────────────────────────────────────────────────────
+
+type PositionOption = { label: string; value: string; description: string };
+type PositionCategory = { category: string; positions: PositionOption[] };
+
+const POSITION_OPTIONS: PositionCategory[] = [
+  {
+    category: 'Goalkeeper',
+    positions: [
+      { label: 'GK', value: 'GK', description: 'Goalkeeper' },
+    ],
+  },
+  {
+    category: 'Defenders',
+    positions: [
+      { label: 'CB',  value: 'CB',  description: 'Center Back' },
+      { label: 'RB',  value: 'RB',  description: 'Right Fullback' },
+      { label: 'LB',  value: 'LB',  description: 'Left Fullback' },
+      { label: 'RWB', value: 'RWB', description: 'Right Wingback' },
+      { label: 'LWB', value: 'LWB', description: 'Left Wingback' },
+    ],
+  },
+  {
+    category: 'Midfielders',
+    positions: [
+      { label: 'DM', value: 'DM', description: 'Defensive Midfielder' },
+      { label: 'CM', value: 'CM', description: 'Central Midfielder' },
+      { label: 'AM', value: 'AM', description: 'Attacking Midfielder' },
+      { label: 'RM', value: 'RM', description: 'Right Midfielder / Winger' },
+      { label: 'LM', value: 'LM', description: 'Left Midfielder / Winger' },
+    ],
+  },
+  {
+    category: 'Forwards',
+    positions: [
+      { label: 'ST', value: 'ST', description: 'Striker / Center Forward' },
+      { label: 'SS', value: 'SS', description: 'Second Striker' },
+    ],
+  },
+];
+
+const ALL_POSITIONS: PositionOption[] = POSITION_OPTIONS.flatMap(c => c.positions);
+
+// ── PositionPicker ─────────────────────────────────────────────────────────────
+
+interface PositionPickerProps {
+  value: string;
+  onSelect: (value: string) => void;
+  placeholder: string;
+  optional?: boolean;
+}
+
+const PositionPicker = ({ value, onSelect, placeholder, optional = false }: PositionPickerProps) => {
+  const [visible, setVisible] = useState(false);
+  const selected = ALL_POSITIONS.find(p => p.value === value);
+
+  return (
+    <>
+      <TouchableOpacity
+        style={pickerStyles.trigger}
+        onPress={() => setVisible(true)}
+        accessibilityRole="button"
+        accessibilityLabel={placeholder}
+      >
+        <Text style={[pickerStyles.triggerText, !value && pickerStyles.triggerPlaceholder]}>
+          {value ? `${value}  –  ${selected?.description ?? value}` : placeholder}
+        </Text>
+        <Icon name="chevron-down" size={16} color={theme.colors.border} />
+      </TouchableOpacity>
+
+      <Modal
+        visible={visible}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setVisible(false)}
+      >
+        <View style={pickerStyles.modalRoot}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => setVisible(false)} />
+          <View style={pickerStyles.sheet}>
+            <View style={pickerStyles.sheetHandle} />
+            <Text style={pickerStyles.sheetTitle}>{placeholder}</Text>
+            <ScrollView showsVerticalScrollIndicator={false}>
+              {optional && (
+                <TouchableOpacity
+                  style={[pickerStyles.optionRow, value === '' && pickerStyles.optionRowSelected]}
+                  onPress={() => { onSelect(''); setVisible(false); }}
+                  accessibilityRole="button"
+                  accessibilityLabel="None — clear selection"
+                >
+                  <Text style={[pickerStyles.optionLabel, value === '' && pickerStyles.optionLabelSelected]}>—</Text>
+                  <Text style={[pickerStyles.optionDesc, value === '' && pickerStyles.optionDescSelected]}>
+                    None (clear selection)
+                  </Text>
+                  {value === '' && <Icon name="checkmark" size={16} color={theme.colors.primary} />}
+                </TouchableOpacity>
+              )}
+              {POSITION_OPTIONS.map(cat => (
+                <View key={cat.category}>
+                  <Text style={pickerStyles.categoryHeader}>{cat.category}</Text>
+                  {cat.positions.map(pos => (
+                    <TouchableOpacity
+                      key={pos.value}
+                      style={[
+                        pickerStyles.optionRow,
+                        value === pos.value && pickerStyles.optionRowSelected,
+                      ]}
+                      onPress={() => { onSelect(pos.value); setVisible(false); }}
+                      accessibilityRole="button"
+                      accessibilityLabel={`${pos.label} — ${pos.description}`}
+                    >
+                      <Text style={[pickerStyles.optionLabel, value === pos.value && pickerStyles.optionLabelSelected]}>
+                        {pos.label}
+                      </Text>
+                      <Text style={[pickerStyles.optionDesc, value === pos.value && pickerStyles.optionDescSelected]}>
+                        {pos.description}
+                      </Text>
+                      {value === pos.value && <Icon name="checkmark" size={16} color={theme.colors.primary} />}
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+    </>
+  );
+};
+
+const pickerStyles = StyleSheet.create({
+  trigger: {
+    height: 42,
+    borderColor: theme.colors.border,
+    borderWidth: 1,
+    marginBottom: theme.spacing.sm,
+    paddingHorizontal: theme.spacing.sm,
+    borderRadius: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: theme.colors.background,
+  },
+  triggerText: {
+    fontSize: 15,
+    color: theme.colors.text,
+    flex: 1,
+  },
+  triggerPlaceholder: {
+    color: theme.colors.border,
+  },
+  modalRoot: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  sheet: {
+    backgroundColor: theme.colors.card,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: theme.spacing.md,
+    paddingBottom: theme.spacing.xl,
+    maxHeight: '75%',
+    elevation: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -3 },
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+  },
+  sheetHandle: {
+    width: 40,
+    height: 4,
+    backgroundColor: theme.colors.border,
+    borderRadius: 2,
+    alignSelf: 'center',
+    marginBottom: theme.spacing.md,
+  },
+  sheetTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: theme.colors.text,
+    marginBottom: theme.spacing.sm,
+  },
+  categoryHeader: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: theme.colors.text,
+    opacity: 0.4,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+    paddingHorizontal: theme.spacing.sm,
+    paddingTop: theme.spacing.sm,
+    paddingBottom: 4,
+  },
+  optionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: theme.spacing.sm,
+    paddingVertical: 12,
+    borderRadius: 8,
+    gap: theme.spacing.sm,
+  },
+  optionRowSelected: {
+    backgroundColor: `${theme.colors.primary}18`,
+  },
+  optionLabel: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: theme.colors.text,
+    minWidth: 44,
+  },
+  optionLabelSelected: {
+    color: theme.colors.primary,
+  },
+  optionDesc: {
+    fontSize: 14,
+    color: theme.colors.text,
+    opacity: 0.6,
+    flex: 1,
+  },
+  optionDescSelected: {
+    color: theme.colors.primary,
+    opacity: 0.85,
+  },
+});
 
 // ── Defined outside the component so it is never recreated on re-render ──
 const EmptyRoster = () => (
@@ -187,24 +412,18 @@ const TeamRosterScreen = () => {
           />
 
           <Text style={styles.inputLabel}>Primary Position <Text style={styles.required}>*</Text></Text>
-          <TextInput
-            style={styles.input}
-            placeholder="e.g. Striker"
+          <PositionPicker
             value={primaryPosition}
-            onChangeText={setPrimaryPosition}
-            placeholderTextColor={theme.colors.border}
-            returnKeyType="next"
+            onSelect={setPrimaryPosition}
+            placeholder="Select primary position"
           />
 
           <Text style={styles.inputLabel}>Secondary Position <Text style={styles.optional}>(optional)</Text></Text>
-          <TextInput
-            style={styles.input}
-            placeholder="e.g. Midfielder"
+          <PositionPicker
             value={secondaryPosition}
-            onChangeText={setSecondaryPosition}
-            placeholderTextColor={theme.colors.border}
-            returnKeyType="done"
-            onSubmitEditing={addPlayer}
+            onSelect={setSecondaryPosition}
+            placeholder="Select secondary position"
+            optional
           />
 
           <TouchableOpacity
@@ -320,21 +539,18 @@ const TeamRosterScreen = () => {
               />
 
               <Text style={styles.inputLabel}>Primary Position <Text style={styles.required}>*</Text></Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Primary Position"
+              <PositionPicker
                 value={editPrimaryPosition}
-                onChangeText={setEditPrimaryPosition}
-                placeholderTextColor={theme.colors.border}
+                onSelect={setEditPrimaryPosition}
+                placeholder="Select primary position"
               />
 
               <Text style={styles.inputLabel}>Secondary Position <Text style={styles.optional}>(optional)</Text></Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Secondary Position"
+              <PositionPicker
                 value={editSecondaryPosition}
-                onChangeText={setEditSecondaryPosition}
-                placeholderTextColor={theme.colors.border}
+                onSelect={setEditSecondaryPosition}
+                placeholder="Select secondary position"
+                optional
               />
 
               <View style={styles.modalActions}>

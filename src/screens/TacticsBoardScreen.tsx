@@ -7,9 +7,10 @@ import Animated, { useSharedValue, useAnimatedStyle, runOnJS } from 'react-nativ
 import { Player } from '../models/Player';
 import { getPlayers } from '../database';
 import { theme } from '../theme';
-import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { NativeStackNavigationProp, NativeStackScreenProps } from '@react-navigation/native-stack';
 import FieldBackground from '../components/FieldBackground';
 import Icon from 'react-native-vector-icons/Ionicons';
+import { useGame } from '../context/GameContext';
 
 // ── Exported so GameDayScreen can type the navigation param correctly ──
 export type GameFormat = '11v11' | '9v9' | '7v7';
@@ -17,18 +18,13 @@ export type GameFormat = '11v11' | '9v9' | '7v7';
 type GameFlowStackParamList = {
   GameDay: undefined;
   TacticsBoard: { activePlayers: string[]; format: GameFormat };
-  SubstitutionMatrix: {
-    assignedPlayers: { [positionIndex: string]: Player | null };
-    unassignedPlayers: Player[];
-  };
+  SubstitutionMatrix: undefined;
 };
 
 type TacticsBoardScreenRouteProp = RouteProp<GameFlowStackParamList, 'TacticsBoard'>;
 type TacticsBoardScreenNavigationProp = NativeStackNavigationProp<GameFlowStackParamList, 'TacticsBoard'>;
 
-type Props = {
-  route: TacticsBoardScreenRouteProp;
-};
+type Props = NativeStackScreenProps<GameFlowStackParamList, 'TacticsBoard'>;
 
 type FormationPosition = { top: `${number}%`; left: `${number}%`; label: string };
 type SlotLayout = { x: number; y: number; width: number; height: number };
@@ -169,6 +165,7 @@ const TacticsBoardScreen = ({ route }: Props) => {
   const navigation = useNavigation<TacticsBoardScreenNavigationProp>();
   const { activePlayers: activePlayerIds, format } = route.params;
   const playerCount = FORMAT_PLAYER_COUNT[format];
+  const { setSquad, handleStart } = useGame();
 
   // ── React state ──
   const [formation, setFormation] = useState<string>(DEFAULT_FORMATION[format]);
@@ -436,16 +433,53 @@ const TacticsBoardScreen = ({ route }: Props) => {
             );
           })}
 
-          {/* Start Game FAB — bottom-right of field */}
-          <TouchableOpacity
-            style={styles.fab}
-            onPress={() => navigation.navigate('SubstitutionMatrix', { assignedPlayers, unassignedPlayers })}
-            accessibilityRole="button"
-            accessibilityLabel="Start Game"
-          >
-            <Icon name="play" size={18} color="white" />
-            <Text style={styles.fabText}>Start</Text>
-          </TouchableOpacity>
+          {/* FABs — bottom-right of field */}
+          <View style={styles.fabStack}>
+            {/* Substitution — go straight to current substitution column */}
+            <TouchableOpacity
+              style={[styles.fab, styles.fabSub]}
+              onPress={() => {
+                const formationPositions = FORMATIONS[format][formation] ?? [];
+                const slotAssignments: { [k: string]: import('../context/GameContext').SlotAssignment } = {};
+                formationPositions.forEach((pos, idx) => {
+                  slotAssignments[String(idx)] = {
+                    player: assignedPlayers[idx] ?? null,
+                    positionLabel: pos.label,
+                  };
+                });
+                setSquad(slotAssignments, unassignedPlayers);
+                navigation.navigate('SubstitutionMatrix');
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="Go to substitution screen"
+            >
+              <Icon name="swap-horizontal" size={18} color="white" />
+              <Text style={styles.fabText}>Substitution</Text>
+            </TouchableOpacity>
+
+            {/* Start Game */}
+            <TouchableOpacity
+              style={styles.fab}
+              onPress={() => {
+                const formationPositions = FORMATIONS[format][formation] ?? [];
+                const slotAssignments: { [k: string]: import('../context/GameContext').SlotAssignment } = {};
+                formationPositions.forEach((pos, idx) => {
+                  slotAssignments[String(idx)] = {
+                    player: assignedPlayers[idx] ?? null,
+                    positionLabel: pos.label,
+                  };
+                });
+                setSquad(slotAssignments, unassignedPlayers);
+                handleStart();
+                navigation.navigate('SubstitutionMatrix');
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="Start Game"
+            >
+              <Icon name="play" size={18} color="white" />
+              <Text style={styles.fabText}>Start</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* ── Bench ── */}
@@ -654,11 +688,16 @@ const styles = StyleSheet.create({
     zIndex: 999,
   },
 
-  // ── FAB
-  fab: {
+  // ── FABs
+  fabStack: {
     position: 'absolute',
     bottom: theme.spacing.md,
     right: theme.spacing.md,
+    flexDirection: 'column',
+    alignItems: 'flex-end',
+    gap: theme.spacing.sm,
+  },
+  fab: {
     backgroundColor: theme.colors.primary,
     borderRadius: 28,
     paddingHorizontal: theme.spacing.md,
@@ -671,6 +710,9 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 4,
+  },
+  fabSub: {
+    backgroundColor: '#6366F1', // indigo — visually distinct from the green Start
   },
   fabText: {
     color: 'white',

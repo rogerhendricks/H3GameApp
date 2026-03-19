@@ -1,193 +1,216 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { View, Text, StyleSheet, ScrollView, FlatList, TouchableOpacity, TextInput, Alert } from 'react-native';
-import { RouteProp, useNavigation } from '@react-navigation/native';
-import { Player } from '../models/Player';
-import { theme } from '../theme';
-import Icon from 'react-native-vector-icons/Ionicons';
+/**
+ * SubstitutionMatrixScreen
+ *
+ * Features
+ * ────────
+ * • 5 min / 10 min interval picker — shown before the game starts
+ * • Shared timer that persists if the user navigates back to TacticsBoard
+ * • Column navigation (‹ ›) so the coach can look ahead / behind the clock
+ * • Auto-advance to new column + Alert at every interval boundary
+ * • Bench-first layout
+ *     - Bench section at the top: each player has a "Sub In" button
+ *     - On-Field section below: compact list
+ * • Position-match highlighting when a Sub-In flow is active
+ *     - Primary position match  → green tint
+ *     - Secondary position match → yellow tint
+ *     - Tap an on-field player to confirm the swap
+ * • Scrollable matrix (full history) below the live panels
+ * • Scoreboard with editable team names
+ */
+
+import React, { useMemo, useState } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  FlatList,
+  TouchableOpacity,
+  TextInput,
+} from 'react-native';
 import { Svg, Circle } from 'react-native-svg';
+import Icon from 'react-native-vector-icons/Ionicons';
+import { theme } from '../theme';
+import { useGame } from '../context/GameContext';
+import { Player } from '../models/Player';
 
-type GameFlowStackParamList = {
-    SubstitutionMatrix: {
-      assignedPlayers: { [positionIndex: string]: Player | null };
-      unassignedPlayers: Player[];
-    };
-  };
-
-type SubstitutionMatrixScreenRouteProp = RouteProp<
-  GameFlowStackParamList,
-  'SubstitutionMatrix'
->;
-
-type Props = {
-  route: SubstitutionMatrixScreenRouteProp;
-};
-
-const GAME_DURATION = 90 * 60;
-const TIME_INTERVAL = 10 * 60;
-const NUM_INTERVALS = GAME_DURATION / TIME_INTERVAL; // 9 intervals
+// ── Layout constants ───────────────────────────────────────────────────────────
 const CIRCLE_RADIUS = 60;
 const CIRCLE_CIRCUMFERENCE = 2 * Math.PI * CIRCLE_RADIUS;
-const INTERVAL_LABELS = Array.from({ length: NUM_INTERVALS }, (_, i) => `${i * 10}'`);
 const PLAYER_NAME_COL_WIDTH = 110;
 const STATUS_BLOCK_SIZE = 22;
 const PLAYTIME_COL_WIDTH = 36;
 
-const SubstitutionMatrixScreen = ({ route }: Props) => {
-  const { assignedPlayers, unassignedPlayers } = route.params;
-  const [gameTime, setGameTime] = useState(0);
-  const [isActive, setIsActive] = useState(false);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+// ── Position compatibility helper ─────────────────────────────────────────────
+/**
+ * Given the label of the slot being vacated and a player's positions,
+ * return 'primary' | 'secondary' | 'none'.
+ */
+function positionMatch(
+  slotLabel: string,
+  player: Player
+): 'primary' | 'secondary' | 'none' {
+  const norm = (s: string) => s.trim().toUpperCase();
+  const slot = norm(slotLabel);
+  if (norm(player.primaryPosition) === slot) return 'primary';
+  if (player.secondaryPosition && norm(player.secondaryPosition) === slot)
+    return 'secondary';
+  return 'none';
+}
 
-  // Scoreboard
-  const [homeScore, setHomeScore] = useState(0);
-  const [awayScore, setAwayScore] = useState(0);
-  const [homeName, setHomeName] = useState('Home');
-  const [awayName, setAwayName] = useState('Away');
+// ── Component ─────────────────────────────────────────────────────────────────
+
+const SubstitutionMatrixScreen = () => {
+  const {
+    gameTime,
+    isActive,
+    timerInterval,
+    setTimerInterval,
+    handleStart,
+    handleStop,
+    handleReset,
+    handleNewGame,
+    currentInterval,
+    displayInterval,
+    numIntervals,
+    intervalLabels,
+    advanceDisplayInterval,
+    retreatDisplayInterval,
+    assignedPlayers,
+    unassignedPlayers,
+    playerStatus,
+    toggleStatus,
+    executeSubstitution,
+    homeScore,
+    awayScore,
+    homeName,
+    awayName,
+    setHomeScore,
+    setAwayScore,
+    setHomeName,
+    setAwayName,
+    GAME_DURATION,
+  } = useGame();
+
+  // ── Local UI state ──
   const [editingHome, setEditingHome] = useState(false);
   const [editingAway, setEditingAway] = useState(false);
+  /** The bench player the coach has tapped "Sub In" for */
+  const [pendingSubIn, setPendingSubIn] = useState<Player | null>(null);
 
-  const allPlayers = useMemo(() => [
-    ...Object.values(assignedPlayers).filter((p): p is Player => p !== null),
-    ...unassignedPlayers,
-  ].sort((a, b) => a.name.localeCompare(b.name)), [assignedPlayers, unassignedPlayers]);
+  const gameStarted = gameTime > 0 || isActive;
 
-  const buildInitialStatus = () => {
-    const initialStatus: { [playerId: string]: ('on' | 'off')[] } = {};
-    allPlayers.forEach(player => {
-      initialStatus[player.id] = Array(NUM_INTERVALS).fill('off');
-      const isOnField = Object.values(assignedPlayers).some(p => p?.id === player.id);
-      if (isOnField) {
-        initialStatus[player.id][0] = 'on';
-      }
+  // ── Derived player lists ───────────────────────────────────────────────────
+  const allPlayers = useMemo(() => {
+    const onField = Object.values(assignedPlayers)
+      .map(s => s.player)
+      .filter((p): p is Player => p !== null);
+    const combined = [...onField, ...unassignedPlayers];
+    const seen = new Set<string>();
+    return combined.filter(p => {
+      if (seen.has(p.id)) return false;
+      seen.add(p.id);
+      return true;
     });
-    return initialStatus;
-  };
+  }, [assignedPlayers, unassignedPlayers]);
 
-  const [playerStatus, setPlayerStatus] = useState(buildInitialStatus);
+  /** Players currently on the field at displayInterval */
+  const onFieldPlayers = useMemo(
+    () =>
+      allPlayers.filter(
+        p => (playerStatus[p.id]?.[displayInterval] ?? 'off') === 'on'
+      ),
+    [allPlayers, playerStatus, displayInterval]
+  );
 
-  useEffect(() => {
-    if (isActive) {
-      timerRef.current = setInterval(() => {
-        setGameTime(prev => {
-          if (prev >= GAME_DURATION) {
-            clearInterval(timerRef.current!);
-            setIsActive(false);
-            return GAME_DURATION;
-          }
-          return prev + 1;
-        });
-      }, 1000);
-    } else if (timerRef.current) {
-      clearInterval(timerRef.current);
-    }
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-    };
-  }, [isActive]);
+  /** Players currently on the bench at displayInterval */
+  const benchPlayers = useMemo(
+    () =>
+      allPlayers.filter(
+        p => (playerStatus[p.id]?.[displayInterval] ?? 'off') === 'off'
+      ),
+    [allPlayers, playerStatus, displayInterval]
+  );
 
-  const currentInterval = Math.min(Math.floor(gameTime / TIME_INTERVAL), NUM_INTERVALS - 1);
-
-  // Find the bench player who has been off the field the longest.
-  // Lower lastIndexOf('on') = sat out longer. -1 = never played.
+  // ── Suggestion logic (based on currentInterval / clock) ───────────────────
   const longestBenchPlayerId = useMemo(() => {
     let earliestLastOn = Infinity;
     let suggestedId: string | null = null;
-
     allPlayers.forEach(p => {
-      const statusSoFar = playerStatus[p.id].slice(0, currentInterval + 1);
-      const isCurrentlyOff = statusSoFar[statusSoFar.length - 1] === 'off';
-      if (isCurrentlyOff) {
-        const lastOnIndex = statusSoFar.lastIndexOf('on'); // -1 if never played
-        if (lastOnIndex < earliestLastOn) {
-          earliestLastOn = lastOnIndex;
-          suggestedId = p.id;
-        }
+      const slice = playerStatus[p.id]?.slice(0, currentInterval + 1) ?? [];
+      if (slice[slice.length - 1] !== 'off') return;
+      const lastOn = slice.lastIndexOf('on');
+      if (lastOn < earliestLastOn) {
+        earliestLastOn = lastOn;
+        suggestedId = p.id;
       }
     });
-
     return suggestedId;
-  }, [playerStatus, currentInterval, allPlayers]);
+  }, [allPlayers, playerStatus, currentInterval]);
 
-  // Find the on-field player who has played the most intervals (candidate to sub out).
   const longestFieldPlayerId = useMemo(() => {
     if (!longestBenchPlayerId) return null;
     let mostIntervals = -1;
     let suggestedId: string | null = null;
-
     allPlayers.forEach(p => {
-      const statusSoFar = playerStatus[p.id].slice(0, currentInterval + 1);
-      const isCurrentlyOn = statusSoFar[statusSoFar.length - 1] === 'on';
-      if (isCurrentlyOn) {
-        const onCount = statusSoFar.filter(s => s === 'on').length;
-        if (onCount > mostIntervals) {
-          mostIntervals = onCount;
-          suggestedId = p.id;
-        }
+      const slice = playerStatus[p.id]?.slice(0, currentInterval + 1) ?? [];
+      if (slice[slice.length - 1] !== 'on') return;
+      const onCount = slice.filter(s => s === 'on').length;
+      if (onCount > mostIntervals) {
+        mostIntervals = onCount;
+        suggestedId = p.id;
       }
     });
-
     return suggestedId;
-  }, [longestBenchPlayerId, playerStatus, currentInterval, allPlayers]);
+  }, [longestBenchPlayerId, allPlayers, playerStatus, currentInterval]);
 
-  const getPlayMinutes = (playerId: string) =>
-    playerStatus[playerId].filter(s => s === 'on').length * 10;
+  const suggestedBenchPlayer = allPlayers.find(p => p.id === longestBenchPlayerId);
+  const suggestedFieldPlayer = allPlayers.find(p => p.id === longestFieldPlayerId);
 
-  const toggleStatus = (playerId: string, intervalIndex: number) => {
-    setPlayerStatus(prev => {
-      const updated = { ...prev, [playerId]: [...prev[playerId]] };
-      updated[playerId][intervalIndex] = updated[playerId][intervalIndex] === 'on' ? 'off' : 'on';
-      return updated;
-    });
+  // ── Sub-In flow ────────────────────────────────────────────────────────────
+  const handleSubInTap = (player: Player) => {
+    setPendingSubIn(prev => (prev?.id === player.id ? null : player));
   };
 
-  const handleStart = () => setIsActive(true);
-  const handleStop = () => setIsActive(false);
-  const handleReset = () => {
-    setIsActive(false);
-    setGameTime(0);
+  const handleFieldPlayerTap = (fieldPlayer: Player) => {
+    if (!pendingSubIn) return;
+    executeSubstitution(pendingSubIn.id, fieldPlayer.id);
+    setPendingSubIn(null);
   };
 
-  const handleNewGame = () => {
-    Alert.alert(
-      'New Game',
-      'This will reset the timer, scoreboard, and all substitution records. Start fresh?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'New Game',
-          style: 'destructive',
-          onPress: () => {
-            setIsActive(false);
-            setGameTime(0);
-            setHomeScore(0);
-            setAwayScore(0);
-            setPlayerStatus(buildInitialStatus());
-          },
-        },
-      ],
+  /** Given a field player, find the label of the slot they occupy */
+  const getSlotLabelForPlayer = (playerId: string): string | null => {
+    const entry = Object.values(assignedPlayers).find(
+      s => s.player?.id === playerId
     );
+    return entry?.positionLabel ?? null;
   };
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+  const getPlayMinutes = (playerId: string) =>
+    (playerStatus[playerId]?.filter(s => s === 'on').length ?? 0) *
+    (timerInterval / 60);
 
   const formatTime = (time: number) => {
-    const minutes = Math.floor(time / 60);
-    const seconds = time % 60;
-    return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+    const m = Math.floor(time / 60);
+    const s = time % 60;
+    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
   const progress = gameTime / GAME_DURATION;
   const strokeDashoffset = CIRCLE_CIRCUMFERENCE * (1 - progress);
 
-  const suggestedBenchPlayer = allPlayers.find(p => p.id === longestBenchPlayerId);
-  const suggestedFieldPlayer = allPlayers.find(p => p.id === longestFieldPlayerId);
-
+  // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
 
-      {/* ── Scoreboard ── */}
+      {/* ══════════════════════════════════════════════════════════════════════
+          SCOREBOARD
+      ══════════════════════════════════════════════════════════════════════ */}
       <View style={styles.scoreCard}>
         <View style={styles.scoreRow}>
 
-          {/* Home Team */}
+          {/* Home */}
           <View style={styles.teamBlock}>
             <TouchableOpacity
               onPress={() => setEditingHome(true)}
@@ -232,12 +255,11 @@ const SubstitutionMatrixScreen = ({ route }: Props) => {
             </View>
           </View>
 
-          {/* Score divider */}
           <View style={styles.scoreDivider}>
             <Text style={styles.scoreDividerText}>–</Text>
           </View>
 
-          {/* Away Team */}
+          {/* Away */}
           <View style={styles.teamBlock}>
             <TouchableOpacity
               onPress={() => setEditingAway(true)}
@@ -281,10 +303,8 @@ const SubstitutionMatrixScreen = ({ route }: Props) => {
               </TouchableOpacity>
             </View>
           </View>
-
         </View>
 
-        {/* Reset score */}
         <TouchableOpacity
           style={styles.resetScoreBtn}
           onPress={() => { setHomeScore(0); setAwayScore(0); }}
@@ -296,8 +316,41 @@ const SubstitutionMatrixScreen = ({ route }: Props) => {
         </TouchableOpacity>
       </View>
 
-      {/* ── Timer ── */}
+      {/* ══════════════════════════════════════════════════════════════════════
+          TIMER
+      ══════════════════════════════════════════════════════════════════════ */}
       <View style={styles.timerSection}>
+
+        {/* Interval picker — only before the game starts */}
+        {!gameStarted && (
+          <View style={styles.intervalPickerRow}>
+            <Text style={styles.intervalPickerLabel}>Sub Interval</Text>
+            <View style={styles.intervalChips}>
+              {([300, 600] as const).map(iv => (
+                <TouchableOpacity
+                  key={iv}
+                  onPress={() => setTimerInterval(iv)}
+                  style={[
+                    styles.intervalChip,
+                    timerInterval === iv && styles.intervalChipActive,
+                  ]}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${iv / 60} minute intervals`}
+                >
+                  <Text
+                    style={[
+                      styles.intervalChipText,
+                      timerInterval === iv && styles.intervalChipTextActive,
+                    ]}
+                  >
+                    {iv / 60} min
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        )}
+
         <View style={styles.timerCircleWrapper}>
           <Svg width={CIRCLE_RADIUS * 2 + 20} height={CIRCLE_RADIUS * 2 + 20}>
             <Circle
@@ -322,7 +375,6 @@ const SubstitutionMatrixScreen = ({ route }: Props) => {
               originY={`${CIRCLE_RADIUS + 10}`}
             />
           </Svg>
-          {/* Overlaid text — centered via absoluteFill */}
           <View style={StyleSheet.absoluteFill} pointerEvents="none">
             <View style={styles.timerTextWrapper}>
               <Text style={styles.timerText}>{formatTime(gameTime)}</Text>
@@ -370,7 +422,6 @@ const SubstitutionMatrixScreen = ({ route }: Props) => {
           </TouchableOpacity>
         </View>
 
-        {/* New Game button */}
         <TouchableOpacity
           onPress={handleNewGame}
           style={styles.newGameBtn}
@@ -382,10 +433,17 @@ const SubstitutionMatrixScreen = ({ route }: Props) => {
         </TouchableOpacity>
       </View>
 
-      {/* ── Substitution Suggestion Banner ── */}
+      {/* ══════════════════════════════════════════════════════════════════════
+          SUGGESTION BANNER (clock-driven)
+      ══════════════════════════════════════════════════════════════════════ */}
       {suggestedBenchPlayer ? (
         <View style={styles.suggestionBanner}>
-          <Icon name="swap-horizontal-outline" size={18} color={theme.colors.text} style={styles.suggestionIcon} />
+          <Icon
+            name="swap-horizontal-outline"
+            size={18}
+            color={theme.colors.text}
+            style={styles.suggestionIcon}
+          />
           <View style={styles.suggestionContent}>
             <Text style={styles.suggestionLabel}>Suggested Substitution</Text>
             <Text style={styles.suggestionDetail}>
@@ -398,27 +456,262 @@ const SubstitutionMatrixScreen = ({ route }: Props) => {
         </View>
       ) : null}
 
-      {/* ── Matrix ── */}
-      <View style={styles.matrixContainer}>
+      {/* ══════════════════════════════════════════════════════════════════════
+          COLUMN NAVIGATOR  (current viewed interval)
+      ══════════════════════════════════════════════════════════════════════ */}
+      <View style={styles.columnNavRow}>
+        <TouchableOpacity
+          onPress={retreatDisplayInterval}
+          disabled={displayInterval === 0}
+          style={[styles.columnNavBtn, displayInterval === 0 && styles.columnNavBtnDisabled]}
+          accessibilityRole="button"
+          accessibilityLabel="Previous interval"
+        >
+          <Icon
+            name="chevron-back"
+            size={20}
+            color={displayInterval === 0 ? theme.colors.border : theme.colors.primary}
+          />
+        </TouchableOpacity>
 
+        <View style={styles.columnNavCenter}>
+          <Text style={styles.columnNavTitle}>
+            {intervalLabels[displayInterval]} – {intervalLabels[displayInterval + 1] ?? 'FT'}
+          </Text>
+          {displayInterval === currentInterval && (
+            <View style={styles.liveTag}>
+              <Text style={styles.liveTagText}>LIVE</Text>
+            </View>
+          )}
+        </View>
+
+        <TouchableOpacity
+          onPress={advanceDisplayInterval}
+          disabled={displayInterval >= numIntervals - 1}
+          style={[
+            styles.columnNavBtn,
+            displayInterval >= numIntervals - 1 && styles.columnNavBtnDisabled,
+          ]}
+          accessibilityRole="button"
+          accessibilityLabel="Next interval"
+        >
+          <Icon
+            name="chevron-forward"
+            size={20}
+            color={
+              displayInterval >= numIntervals - 1 ? theme.colors.border : theme.colors.primary
+            }
+          />
+        </TouchableOpacity>
+      </View>
+
+      {/* ══════════════════════════════════════════════════════════════════════
+          BENCH SECTION (bench-first — the important actions are here)
+      ══════════════════════════════════════════════════════════════════════ */}
+      <View style={styles.sectionCard}>
+        <View style={styles.sectionHeader}>
+          <Icon name="time-outline" size={16} color={theme.colors.text} style={{ opacity: 0.6 }} />
+          <Text style={styles.sectionTitle}>
+            Bench{' '}
+            <Text style={styles.sectionCount}>{benchPlayers.length}</Text>
+          </Text>
+          {pendingSubIn && (
+            <TouchableOpacity
+              onPress={() => setPendingSubIn(null)}
+              style={styles.cancelSubBtn}
+              accessibilityRole="button"
+              accessibilityLabel="Cancel substitution"
+            >
+              <Icon name="close-circle" size={16} color={theme.colors.danger} />
+              <Text style={styles.cancelSubText}>Cancel Sub</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {benchPlayers.length === 0 ? (
+          <Text style={styles.emptySection}>All players are on the field</Text>
+        ) : (
+          benchPlayers.map(player => {
+            const isPending = pendingSubIn?.id === player.id;
+            return (
+              <View
+                key={player.id}
+                style={[
+                  styles.playerListRow,
+                  isPending && styles.playerListRowPending,
+                  player.id === longestBenchPlayerId && !isPending && styles.benchSuggestionRow,
+                ]}
+              >
+                {/* Jersey badge */}
+                <View style={[styles.jerseyBadge, isPending && styles.jerseyBadgePending]}>
+                  <Text style={[styles.jerseyBadgeText, isPending && styles.jerseyBadgeTextPending]}>
+                    #{player.jerseyNumber}
+                  </Text>
+                </View>
+
+                {/* Name + position */}
+                <View style={styles.playerInfoCol}>
+                  <Text style={styles.playerNameText} numberOfLines={1}>
+                    {player.id === longestBenchPlayerId ? '▲ ' : ''}{player.name}
+                  </Text>
+                  <Text style={styles.playerPosText}>
+                    {player.primaryPosition}
+                    {player.secondaryPosition ? ` · ${player.secondaryPosition}` : ''}
+                  </Text>
+                </View>
+
+                {/* Play minutes */}
+                <Text style={styles.playMinsText}>{getPlayMinutes(player.id)}'</Text>
+
+                {/* Sub In button */}
+                <TouchableOpacity
+                  onPress={() => handleSubInTap(player)}
+                  style={[styles.subInBtn, isPending && styles.subInBtnActive]}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Sub in ${player.name}`}
+                >
+                  <Icon
+                    name={isPending ? 'checkmark' : 'arrow-up-circle-outline'}
+                    size={15}
+                    color={isPending ? '#fff' : theme.colors.primary}
+                  />
+                  <Text style={[styles.subInBtnText, isPending && styles.subInBtnTextActive]}>
+                    {isPending ? 'Picking…' : 'Sub In'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            );
+          })
+        )}
+      </View>
+
+      {/* ══════════════════════════════════════════════════════════════════════
+          ON FIELD SECTION
+          When pendingSubIn is set, each row shows a position-match colour
+          and is tappable to confirm the swap.
+      ══════════════════════════════════════════════════════════════════════ */}
+      <View style={styles.sectionCard}>
+        <View style={styles.sectionHeader}>
+          <Icon name="football-outline" size={16} color={theme.colors.text} style={{ opacity: 0.6 }} />
+          <Text style={styles.sectionTitle}>
+            On Field{' '}
+            <Text style={styles.sectionCount}>{onFieldPlayers.length}</Text>
+          </Text>
+        </View>
+
+        {pendingSubIn && (
+          <View style={styles.posMatchLegend}>
+            <View style={[styles.legendDot, { backgroundColor: '#15803d' }]} />
+            <Text style={styles.legendText}>Primary match</Text>
+            <View style={[styles.legendDot, { backgroundColor: '#D97706' }]} />
+            <Text style={styles.legendText}>Secondary match</Text>
+            <View style={[styles.legendDot, { backgroundColor: theme.colors.card, borderWidth: 1, borderColor: theme.colors.border }]} />
+            <Text style={styles.legendText}>No match</Text>
+          </View>
+        )}
+
+        {onFieldPlayers.length === 0 ? (
+          <Text style={styles.emptySection}>No players on the field</Text>
+        ) : (
+          onFieldPlayers.map(player => {
+            const slotLabel = getSlotLabelForPlayer(player.id);
+            const match = pendingSubIn && slotLabel
+              ? positionMatch(slotLabel, pendingSubIn)
+              : 'none';
+
+            const rowBg =
+              pendingSubIn
+                ? match === 'primary'
+                  ? styles.matchPrimaryRow
+                  : match === 'secondary'
+                  ? styles.matchSecondaryRow
+                  : styles.matchNoneRow
+                : player.id === longestFieldPlayerId
+                ? styles.fieldSuggestionRow
+                : undefined;
+
+            return (
+              <TouchableOpacity
+                key={player.id}
+                onPress={() => pendingSubIn && handleFieldPlayerTap(player)}
+                activeOpacity={pendingSubIn ? 0.6 : 1}
+                style={[styles.playerListRow, rowBg]}
+                accessibilityRole={pendingSubIn ? 'button' : 'none'}
+                accessibilityLabel={`Sub out ${player.name}`}
+              >
+                {/* Jersey badge */}
+                <View style={[styles.jerseyBadge, styles.jerseyBadgeOnField]}>
+                  <Text style={[styles.jerseyBadgeText, styles.jerseyBadgeTextOnField]}>
+                    #{player.jerseyNumber}
+                  </Text>
+                </View>
+
+                {/* Name + position */}
+                <View style={styles.playerInfoCol}>
+                  <Text style={styles.playerNameText} numberOfLines={1}>
+                    {player.id === longestFieldPlayerId ? '▼ ' : ''}{player.name}
+                  </Text>
+                  <Text style={styles.playerPosText}>
+                    {player.primaryPosition}
+                    {player.secondaryPosition ? ` · ${player.secondaryPosition}` : ''}
+                    {slotLabel ? `  →  ${slotLabel}` : ''}
+                  </Text>
+                </View>
+
+                {/* Play minutes */}
+                <Text style={styles.playMinsText}>{getPlayMinutes(player.id)}'</Text>
+
+                {/* Arrow shown when a swap is pending */}
+                {pendingSubIn ? (
+                  <View style={styles.subOutIndicator}>
+                    <Icon
+                      name="arrow-down-circle-outline"
+                      size={22}
+                      color={
+                        match === 'primary'
+                          ? '#15803d'
+                          : match === 'secondary'
+                          ? '#D97706'
+                          : theme.colors.border
+                      }
+                    />
+                  </View>
+                ) : null}
+              </TouchableOpacity>
+            );
+          })
+        )}
+      </View>
+
+      {/* ══════════════════════════════════════════════════════════════════════
+          FULL MATRIX (scrollable history)
+      ══════════════════════════════════════════════════════════════════════ */}
+      <View style={styles.matrixContainer}>
         {/* Legend */}
         <View style={styles.legend}>
           <View style={[styles.legendBlock, { backgroundColor: theme.colors.primary }]} />
-          <Text style={styles.legendText}>On Field</Text>
+          <Text style={styles.legendLabelText}>On Field</Text>
           <View style={[styles.legendBlock, { backgroundColor: theme.colors.card, borderColor: theme.colors.border, borderWidth: 1 }]} />
-          <Text style={styles.legendText}>Bench</Text>
+          <Text style={styles.legendLabelText}>Bench</Text>
           <View style={[styles.legendBlock, { backgroundColor: theme.colors.card, borderColor: theme.colors.accent, borderWidth: 2 }]} />
-          <Text style={styles.legendText}>Current</Text>
+          <Text style={styles.legendLabelText}>Current</Text>
         </View>
 
-        {/* Horizontally scrollable header + rows */}
         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
           <View>
             {/* Header row */}
             <View style={styles.headerRow}>
               <View style={{ width: PLAYER_NAME_COL_WIDTH }} />
-              {INTERVAL_LABELS.map(label => (
-                <Text key={label} style={styles.intervalLabel}>{label}</Text>
+              {intervalLabels.map((label, idx) => (
+                <Text
+                  key={label}
+                  style={[
+                    styles.intervalLabel,
+                    idx === displayInterval && styles.intervalLabelActive,
+                  ]}
+                >
+                  {label}
+                </Text>
               ))}
               <Text style={styles.playTimeHeader}>Min</Text>
             </View>
@@ -429,34 +722,34 @@ const SubstitutionMatrixScreen = ({ route }: Props) => {
               keyExtractor={item => item.id}
               scrollEnabled={false}
               renderItem={({ item: player, index }) => {
-                const isBenchSuggestion = player.id === longestBenchPlayerId;
-                const isFieldSuggestion = player.id === longestFieldPlayerId;
+                const isBenchSugg = player.id === longestBenchPlayerId;
+                const isFieldSugg = player.id === longestFieldPlayerId;
                 return (
                   <View
                     style={[
-                      styles.playerRow,
+                      styles.matrixPlayerRow,
                       index % 2 === 1 && styles.alternatingRow,
-                      isBenchSuggestion && styles.benchSuggestionRow,
-                      isFieldSuggestion && styles.fieldSuggestionRow,
+                      isBenchSugg && styles.benchSuggestionRowMatrix,
+                      isFieldSugg && styles.fieldSuggestionRowMatrix,
                     ]}
                   >
-                    <Text style={styles.playerName} numberOfLines={1}>
-                      {isBenchSuggestion ? '▲ ' : isFieldSuggestion ? '▼ ' : '   '}
+                    <Text style={styles.matrixPlayerName} numberOfLines={1}>
+                      {isBenchSugg ? '▲ ' : isFieldSugg ? '▼ ' : '   '}
                       {player.name}
                     </Text>
                     <View style={styles.statusRow}>
-                      {playerStatus[player.id].map((status, idx) => (
+                      {(playerStatus[player.id] ?? []).map((status, idx) => (
                         <TouchableOpacity
                           key={idx}
                           onPress={() => toggleStatus(player.id, idx)}
-                          accessibilityLabel={`Toggle ${player.name} interval ${idx * 10} minutes`}
+                          accessibilityLabel={`Toggle ${player.name} at ${intervalLabels[idx]}`}
                           accessibilityRole="button"
                         >
                           <View
                             style={[
                               styles.statusBlock,
                               status === 'on' ? styles.statusOn : styles.statusOff,
-                              idx === currentInterval && styles.activeInterval,
+                              idx === displayInterval && styles.activeInterval,
                             ]}
                           />
                         </TouchableOpacity>
@@ -470,112 +763,18 @@ const SubstitutionMatrixScreen = ({ route }: Props) => {
           </View>
         </ScrollView>
       </View>
+
     </ScrollView>
   );
 };
+
+// ── Styles ────────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.colors.background },
   contentContainer: { paddingBottom: theme.spacing.xl },
 
-  // Timer
-  timerSection: { alignItems: 'center', padding: theme.spacing.lg, backgroundColor: theme.colors.card, marginBottom: theme.spacing.sm },
-  timerCircleWrapper: {
-    width: CIRCLE_RADIUS * 2 + 20,
-    height: CIRCLE_RADIUS * 2 + 20,
-  },
-  timerTextWrapper: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  timerText: { fontSize: 28, fontWeight: 'bold', color: theme.colors.text },
-  timerSubText: { fontSize: 12, color: theme.colors.border, marginTop: 2 },
-  timerControls: { flexDirection: 'row', justifyContent: 'center', gap: theme.spacing.xl, marginTop: theme.spacing.md },
-  controlButton: { padding: theme.spacing.sm },
-
-  // Suggestion banner
-  suggestionBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: theme.colors.accent,
-    marginHorizontal: theme.spacing.md,
-    marginBottom: theme.spacing.sm,
-    padding: theme.spacing.sm,
-    borderRadius: 8,
-  },
-  suggestionIcon: { marginRight: theme.spacing.sm },
-  suggestionContent: { flex: 1 },
-  suggestionLabel: { fontSize: 11, fontWeight: '600', color: theme.colors.text, opacity: 0.7, textTransform: 'uppercase', letterSpacing: 0.5 },
-  suggestionDetail: { marginTop: 2 },
-  suggestionIn: { fontSize: 14, fontWeight: 'bold', color: '#1a6e00' },
-  suggestionOut: { fontSize: 14, fontWeight: 'bold', color: '#8b0000' },
-
-  // Matrix
-  matrixContainer: { paddingHorizontal: theme.spacing.sm },
-  legend: { flexDirection: 'row', alignItems: 'center', gap: theme.spacing.xs, marginBottom: theme.spacing.sm, marginLeft: theme.spacing.xs },
-  legendBlock: { width: 14, height: 14, borderRadius: 3 },
-  legendText: { ...theme.typography.body, fontSize: 12, color: theme.colors.text, opacity: 0.7, marginRight: theme.spacing.sm },
-
-  headerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: theme.spacing.xs,
-    marginBottom: 2,
-  },
-  intervalLabel: {
-    width: STATUS_BLOCK_SIZE + 2,
-    fontSize: 10,
-    color: theme.colors.border,
-    textAlign: 'center',
-  },
-  playTimeHeader: {
-    width: PLAYTIME_COL_WIDTH,
-    fontSize: 10,
-    color: theme.colors.border,
-    textAlign: 'center',
-    fontWeight: 'bold',
-  },
-
-  playerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: theme.spacing.xs,
-    paddingHorizontal: theme.spacing.xs,
-    borderRadius: 6,
-    marginBottom: 2,
-  },
-  alternatingRow: { backgroundColor: theme.colors.card },
-  benchSuggestionRow: { backgroundColor: '#e6f4ea', borderWidth: 1, borderColor: '#1a6e00' },
-  fieldSuggestionRow: { backgroundColor: '#fde8e8', borderWidth: 1, borderColor: '#8b0000' },
-
-  playerName: {
-    ...theme.typography.body,
-    fontSize: 13,
-    width: PLAYER_NAME_COL_WIDTH,
-    color: theme.colors.text,
-  },
-  statusRow: { flexDirection: 'row', gap: 2 },
-  statusBlock: {
-    width: STATUS_BLOCK_SIZE,
-    height: STATUS_BLOCK_SIZE,
-    borderRadius: 4,
-    borderWidth: 1,
-  },
-  statusOn: { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
-  statusOff: { backgroundColor: theme.colors.background, borderColor: theme.colors.border },
-  activeInterval: { borderWidth: 2, borderColor: theme.colors.accent },
-
-  playTimeText: {
-    width: PLAYTIME_COL_WIDTH,
-    fontSize: 12,
-    fontWeight: '600',
-    color: theme.colors.text,
-    textAlign: 'center',
-    marginLeft: 4,
-  },
-
-  // ── Scoreboard
+  // ── Scoreboard ──────────────────────────────────────────────────────────────
   scoreCard: {
     backgroundColor: theme.colors.card,
     marginHorizontal: theme.spacing.md,
@@ -590,15 +789,8 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.08,
     shadowRadius: 6,
   },
-  scoreRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  teamBlock: {
-    flex: 1,
-    alignItems: 'center',
-  },
+  scoreRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  teamBlock: { flex: 1, alignItems: 'center' },
   teamNameLabel: {
     fontSize: 12,
     fontWeight: '700',
@@ -621,11 +813,7 @@ const styles = StyleSheet.create({
     paddingVertical: 0,
     paddingHorizontal: 2,
   },
-  scorerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: theme.spacing.xs,
-  },
+  scorerRow: { flexDirection: 'row', alignItems: 'center', gap: theme.spacing.xs },
   scoreBtn: {
     width: 34,
     height: 34,
@@ -644,16 +832,8 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 52,
   },
-  scoreDivider: {
-    paddingHorizontal: theme.spacing.xs,
-    paddingTop: theme.spacing.xl,
-  },
-  scoreDividerText: {
-    fontSize: 24,
-    fontWeight: '300',
-    color: theme.colors.text,
-    opacity: 0.25,
-  },
+  scoreDivider: { paddingHorizontal: theme.spacing.xs, paddingTop: theme.spacing.xl },
+  scoreDividerText: { fontSize: 24, fontWeight: '300', color: theme.colors.text, opacity: 0.25 },
   resetScoreBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -662,14 +842,56 @@ const styles = StyleSheet.create({
     marginTop: theme.spacing.sm,
     paddingVertical: theme.spacing.xs,
   },
-  resetScoreText: {
-    fontSize: 11,
-    color: theme.colors.text,
-    opacity: 0.35,
-    fontWeight: '600',
-  },
+  resetScoreText: { fontSize: 11, color: theme.colors.text, opacity: 0.35, fontWeight: '600' },
 
-  // New Game
+  // ── Timer ────────────────────────────────────────────────────────────────────
+  timerSection: {
+    alignItems: 'center',
+    padding: theme.spacing.lg,
+    backgroundColor: theme.colors.card,
+    marginBottom: theme.spacing.sm,
+  },
+  intervalPickerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.spacing.sm,
+    marginBottom: theme.spacing.md,
+  },
+  intervalPickerLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: theme.colors.text,
+    opacity: 0.5,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+  },
+  intervalChips: { flexDirection: 'row', gap: theme.spacing.xs },
+  intervalChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.background,
+  },
+  intervalChipActive: { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
+  intervalChipText: { fontSize: 13, fontWeight: '600', color: theme.colors.text },
+  intervalChipTextActive: { color: '#FFFFFF' },
+
+  timerCircleWrapper: {
+    width: CIRCLE_RADIUS * 2 + 20,
+    height: CIRCLE_RADIUS * 2 + 20,
+  },
+  timerTextWrapper: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  timerText: { fontSize: 28, fontWeight: 'bold', color: theme.colors.text },
+  timerSubText: { fontSize: 12, color: theme.colors.border, marginTop: 2 },
+  timerControls: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: theme.spacing.xl,
+    marginTop: theme.spacing.md,
+  },
+  controlButton: { padding: theme.spacing.sm },
   newGameBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -678,11 +900,260 @@ const styles = StyleSheet.create({
     marginTop: theme.spacing.sm,
     paddingVertical: theme.spacing.xs,
   },
-  newGameBtnText: {
-    fontSize: 13,
+  newGameBtnText: { fontSize: 13, fontWeight: '600', color: theme.colors.danger },
+
+  // ── Suggestion banner ─────────────────────────────────────────────────────────
+  suggestionBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: theme.colors.accent,
+    marginHorizontal: theme.spacing.md,
+    marginBottom: theme.spacing.sm,
+    padding: theme.spacing.sm,
+    borderRadius: 8,
+  },
+  suggestionIcon: { marginRight: theme.spacing.sm },
+  suggestionContent: { flex: 1 },
+  suggestionLabel: {
+    fontSize: 11,
     fontWeight: '600',
-    color: theme.colors.danger,
+    color: theme.colors.text,
+    opacity: 0.7,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  suggestionDetail: { marginTop: 2 },
+  suggestionIn: { fontSize: 14, fontWeight: 'bold', color: '#1a6e00' },
+  suggestionOut: { fontSize: 14, fontWeight: 'bold', color: '#8b0000' },
+
+  // ── Column navigator ──────────────────────────────────────────────────────────
+  columnNavRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: theme.colors.card,
+    marginHorizontal: theme.spacing.md,
+    marginBottom: theme.spacing.sm,
+    borderRadius: 12,
+    paddingHorizontal: theme.spacing.sm,
+    paddingVertical: theme.spacing.sm,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06,
+    shadowRadius: 3,
+  },
+  columnNavBtn: { padding: theme.spacing.xs },
+  columnNavBtnDisabled: { opacity: 0.3 },
+  columnNavCenter: { flexDirection: 'row', alignItems: 'center', gap: theme.spacing.xs },
+  columnNavTitle: { fontSize: 15, fontWeight: '700', color: theme.colors.text },
+  liveTag: {
+    backgroundColor: theme.colors.danger,
+    borderRadius: 4,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+  },
+  liveTagText: { fontSize: 9, fontWeight: '800', color: '#fff', letterSpacing: 1 },
+
+  // ── Section cards (Bench / On Field) ─────────────────────────────────────────
+  sectionCard: {
+    backgroundColor: theme.colors.card,
+    marginHorizontal: theme.spacing.md,
+    marginBottom: theme.spacing.sm,
+    borderRadius: 12,
+    paddingVertical: theme.spacing.sm,
+    paddingHorizontal: theme.spacing.sm,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06,
+    shadowRadius: 3,
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.spacing.xs,
+    marginBottom: theme.spacing.sm,
+  },
+  sectionTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: theme.colors.text,
+    opacity: 0.6,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+    flex: 1,
+  },
+  sectionCount: { fontWeight: '800', color: theme.colors.primary, opacity: 1 },
+  emptySection: {
+    fontSize: 13,
+    color: theme.colors.text,
+    opacity: 0.4,
+    fontStyle: 'italic',
+    paddingVertical: theme.spacing.sm,
+    paddingHorizontal: theme.spacing.xs,
+  },
+
+  cancelSubBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    paddingHorizontal: theme.spacing.xs,
+    paddingVertical: 4,
+  },
+  cancelSubText: { fontSize: 12, fontWeight: '600', color: theme.colors.danger },
+
+  // ── Player list rows ─────────────────────────────────────────────────────────
+  playerListRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: theme.spacing.xs,
+    borderRadius: 8,
+    marginBottom: 2,
+    gap: theme.spacing.xs,
+  },
+  playerListRowPending: {
+    backgroundColor: '#EEF2FF',
+    borderWidth: 1.5,
+    borderColor: '#6366F1',
+  },
+  benchSuggestionRow: { backgroundColor: '#e6f4ea', borderWidth: 1, borderColor: '#15803d' },
+  fieldSuggestionRow: { backgroundColor: '#fde8e8', borderWidth: 1, borderColor: '#8b0000' },
+
+  matchPrimaryRow: { backgroundColor: '#dcfce7', borderWidth: 1.5, borderColor: '#15803d' },
+  matchSecondaryRow: { backgroundColor: '#fef9c3', borderWidth: 1.5, borderColor: '#D97706' },
+  matchNoneRow: { backgroundColor: theme.colors.card },
+
+  jerseyBadge: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: theme.colors.background,
+    borderWidth: 1.5,
+    borderColor: theme.colors.border,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  jerseyBadgePending: { borderColor: '#6366F1', backgroundColor: '#EEF2FF' },
+  jerseyBadgeOnField: { borderColor: theme.colors.primary, backgroundColor: theme.colors.primary },
+  jerseyBadgeText: { fontSize: 10, fontWeight: '700', color: theme.colors.text },
+  jerseyBadgeTextPending: { color: '#6366F1' },
+  jerseyBadgeTextOnField: { color: '#fff' },
+
+  playerInfoCol: { flex: 1 },
+  playerNameText: { fontSize: 14, fontWeight: '600', color: theme.colors.text },
+  playerPosText: { fontSize: 11, color: theme.colors.text, opacity: 0.5, marginTop: 1 },
+  playMinsText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: theme.colors.text,
+    opacity: 0.6,
+    minWidth: 28,
+    textAlign: 'right',
+  },
+
+  subInBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1.5,
+    borderColor: theme.colors.primary,
+    backgroundColor: theme.colors.background,
+  },
+  subInBtnActive: { backgroundColor: '#6366F1', borderColor: '#6366F1' },
+  subInBtnText: { fontSize: 12, fontWeight: '700', color: theme.colors.primary },
+  subInBtnTextActive: { color: '#fff' },
+
+  subOutIndicator: { padding: 4 },
+
+  posMatchLegend: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.spacing.xs,
+    marginBottom: theme.spacing.sm,
+    flexWrap: 'wrap',
+  },
+  legendDot: { width: 12, height: 12, borderRadius: 6 },
+  legendText: { fontSize: 11, color: theme.colors.text, opacity: 0.6, marginRight: 6 },
+
+  // ── Matrix ───────────────────────────────────────────────────────────────────
+  matrixContainer: { paddingHorizontal: theme.spacing.sm, marginTop: theme.spacing.xs },
+  legend: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.spacing.xs,
+    marginBottom: theme.spacing.sm,
+    marginLeft: theme.spacing.xs,
+  },
+  legendBlock: { width: 14, height: 14, borderRadius: 3 },
+  legendLabelText: {
+    fontSize: 12,
+    color: theme.colors.text,
+    opacity: 0.7,
+    marginRight: theme.spacing.sm,
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: theme.spacing.xs,
+    marginBottom: 2,
+  },
+  intervalLabel: {
+    width: STATUS_BLOCK_SIZE + 2,
+    fontSize: 10,
+    color: theme.colors.border,
+    textAlign: 'center',
+  },
+  intervalLabelActive: {
+    color: theme.colors.primary,
+    fontWeight: '700',
+  },
+  playTimeHeader: {
+    width: PLAYTIME_COL_WIDTH,
+    fontSize: 10,
+    color: theme.colors.border,
+    textAlign: 'center',
+    fontWeight: 'bold',
+  },
+  matrixPlayerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: theme.spacing.xs,
+    paddingHorizontal: theme.spacing.xs,
+    borderRadius: 6,
+    marginBottom: 2,
+  },
+  alternatingRow: { backgroundColor: theme.colors.card },
+  benchSuggestionRowMatrix: { backgroundColor: '#e6f4ea', borderWidth: 1, borderColor: '#1a6e00' },
+  fieldSuggestionRowMatrix: { backgroundColor: '#fde8e8', borderWidth: 1, borderColor: '#8b0000' },
+  matrixPlayerName: {
+    fontSize: 13,
+    width: PLAYER_NAME_COL_WIDTH,
+    color: theme.colors.text,
+  },
+  statusRow: { flexDirection: 'row', gap: 2 },
+  statusBlock: {
+    width: STATUS_BLOCK_SIZE,
+    height: STATUS_BLOCK_SIZE,
+    borderRadius: 4,
+    borderWidth: 1,
+  },
+  statusOn: { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
+  statusOff: { backgroundColor: theme.colors.background, borderColor: theme.colors.border },
+  activeInterval: { borderWidth: 2, borderColor: theme.colors.accent },
+  playTimeText: {
+    width: PLAYTIME_COL_WIDTH,
+    fontSize: 12,
+    fontWeight: '600',
+    color: theme.colors.text,
+    textAlign: 'center',
+    marginLeft: 4,
   },
 });
+
 
 export default SubstitutionMatrixScreen;

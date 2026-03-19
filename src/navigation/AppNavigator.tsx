@@ -9,6 +9,7 @@ import GameDayScreen from '../screens/GameDayScreen';
 import TacticsBoardScreen from '../screens/TacticsBoardScreen';
 import SubstitutionMatrixScreen from '../screens/SubstitutionMatrixScreen';
 import { theme } from '../theme';
+import { GameProvider } from '../context/GameContext';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -20,11 +21,13 @@ const RosterStack = () => (
 );
 
 const GameFlowStack = () => (
+  <GameProvider>
     <Stack.Navigator>
         <Stack.Screen name="GameDay" component={GameDayScreen} options={{ headerShown: false }} />
         <Stack.Screen name="TacticsBoard" component={TacticsBoardScreen} />
         <Stack.Screen name="SubstitutionMatrix" component={SubstitutionMatrixScreen} />
     </Stack.Navigator>
+  </GameProvider>
 );
 
 
