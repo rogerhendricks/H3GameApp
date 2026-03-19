@@ -1,9 +1,9 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
 import { RouteProp, useNavigation } from '@react-navigation/native';
-import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { DraxProvider, DraxView, DraxList } from 'react-native-drax';
-import Animated, { Layout } from 'react-native-reanimated';
+import { GestureHandlerRootView, GestureDetector, Gesture } from 'react-native-gesture-handler';
+import Animated, { useSharedValue, useAnimatedStyle, runOnJS } from 'react-native-reanimated';
+
 import { Player } from '../models/Player';
 import { getPlayers } from '../database';
 import { theme } from '../theme';
@@ -31,6 +31,10 @@ type Props = {
 };
 
 type FormationPosition = { top: `${number}%`; left: `${number}%`; label: string };
+type SlotLayout = { x: number; y: number; width: number; height: number };
+
+const NODE_SIZE = 48;
+const HIT_SLOP = 14; // extra hit area in px around each slot for easier drops
 
 /** How many field players (including GK) each format uses */
 const FORMAT_PLAYER_COUNT: Record<GameFormat, number> = {
@@ -165,13 +169,39 @@ const TacticsBoardScreen = ({ route }: Props) => {
   const navigation = useNavigation<TacticsBoardScreenNavigationProp>();
   const { activePlayers: activePlayerIds, format } = route.params;
   const playerCount = FORMAT_PLAYER_COUNT[format];
+
+  // ── React state ──
   const [formation, setFormation] = useState<string>(DEFAULT_FORMATION[format]);
   const [players, setPlayers] = useState<Player[]>([]);
-  const [assignedPlayers, setAssignedPlayers] = useState<{ [positionIndex: number]: Player | null }>(
+  const [assignedPlayers, setAssignedPlayers] = useState<{ [index: number]: Player | null }>(
     Object.fromEntries(Array(playerCount).fill(0).map((_, i) => [i, null]))
   );
   const [unassignedPlayers, setUnassignedPlayers] = useState<Player[]>([]);
+  const [selectedBenchPlayer, setSelectedBenchPlayer] = useState<Player | null>(null);
+  const [ghostInfo, setGhostInfo] = useState<{ player: Player; isGK: boolean } | null>(null);
+  const [draggingSlotIndex, setDraggingSlotIndex] = useState<number | null>(null);
 
+  // ── Shared values (readable on the UI thread) ──
+  const ghostX = useSharedValue(0);
+  const ghostY = useSharedValue(0);
+  const isDragging = useSharedValue(0);
+  const rootOffsetY = useSharedValue(0);
+
+  // ── JS-thread refs ──
+  const fieldRef = useRef<View>(null);
+  const rootRef = useRef<View>(null);
+  const fieldPageRef = useRef({ x: 0, y: 0 });
+  const slotLayoutsRef = useRef<SlotLayout[]>([]);
+  const dragSourceIndexRef = useRef<number | null>(null);
+  // Mirrors of state kept in refs so stable callbacks can always read current values
+  const assignedPlayersRef = useRef(assignedPlayers);
+  const unassignedPlayersRef = useRef(unassignedPlayers);
+  const selectedBenchPlayerRef = useRef(selectedBenchPlayer);
+  useEffect(() => { assignedPlayersRef.current = assignedPlayers; }, [assignedPlayers]);
+  useEffect(() => { unassignedPlayersRef.current = unassignedPlayers; }, [unassignedPlayers]);
+  useEffect(() => { selectedBenchPlayerRef.current = selectedBenchPlayer; }, [selectedBenchPlayer]);
+
+  // ── Load players ──
   const loadPlayers = useCallback(async () => {
     const allPlayers = await getPlayers();
     const active = allPlayers.filter(p => activePlayerIds.includes(p.id));
@@ -179,57 +209,115 @@ const TacticsBoardScreen = ({ route }: Props) => {
     setUnassignedPlayers(active);
   }, [activePlayerIds]);
 
-  useEffect(() => {
-    loadPlayers();
-  }, [loadPlayers]);
+  useEffect(() => { loadPlayers(); }, [loadPlayers]);
 
-  // Bug fix: reset all assignments when the formation changes so no ghost players remain.
+  // ── Formation change resets all assignments ──
   const handleFormationChange = (value: string) => {
     setFormation(value);
     setAssignedPlayers(Object.fromEntries(Array(playerCount).fill(0).map((_, i) => [i, null])));
     setUnassignedPlayers(players);
+    setSelectedBenchPlayer(null);
+    setDraggingSlotIndex(null);
+    slotLayoutsRef.current = [];
   };
 
   const handleClear = () => {
     setAssignedPlayers(Object.fromEntries(Array(playerCount).fill(0).map((_, i) => [i, null])));
     setUnassignedPlayers(players);
+    setSelectedBenchPlayer(null);
   };
 
-  // Bug fix: use a single synchronous state build instead of multiple setState calls
-  // that could race with each other.
-  const handleDrop = (event: any, targetPositionIndex: number | null) => {
-    const droppedPlayer = event.dragged.payload as Player | null;
-    if (!droppedPlayer) return;
+  // ── Bench tap-to-select ──
+  const handleBenchPlayerTap = (player: Player) => {
+    setSelectedBenchPlayer(prev => (prev?.id === player.id ? null : player));
+  };
 
-    const sourcePositionIndex = Object.entries(assignedPlayers).find(
-      ([, player]) => player?.id === droppedPlayer.id,
-    )?.[0];
+  // ── Field slot tap: assign selected bench player ──
+  const handleSlotTap = useCallback((slotIndex: number) => {
+    const benchPlayer = selectedBenchPlayerRef.current;
+    if (!benchPlayer) return;
+    const displaced = assignedPlayersRef.current[slotIndex];
+    setAssignedPlayers(prev => { const n = { ...prev }; n[slotIndex] = benchPlayer; return n; });
+    setUnassignedPlayers(prev => {
+      const filtered = prev.filter(p => p.id !== benchPlayer.id);
+      return displaced ? [...filtered, displaced] : filtered;
+    });
+    setSelectedBenchPlayer(null);
+  }, []);
 
-    const newAssigned = { ...assignedPlayers };
-    let newUnassigned = [...unassignedPlayers].filter(p => p.id !== droppedPlayer.id);
+  // ── Drag start — called from worklet via runOnJS ──
+  const onDragStart = useCallback((slotIndex: number) => {
+    const player = assignedPlayersRef.current[slotIndex];
+    if (!player) return;
+    dragSourceIndexRef.current = slotIndex;
+    setGhostInfo({ player, isGK: slotIndex === 0 });
+    setDraggingSlotIndex(slotIndex);
+    setSelectedBenchPlayer(null);
+  }, []);
 
-    if (sourcePositionIndex !== undefined) {
-      newAssigned[parseInt(sourcePositionIndex, 10)] = null;
-    }
+  // ── Drag end — called from worklet via runOnJS ──
+  const onDragEnd = useCallback((screenX: number, screenY: number) => {
+    const sourceIndex = dragSourceIndexRef.current;
+    const droppedPlayer = sourceIndex !== null ? assignedPlayersRef.current[sourceIndex] : null;
+    dragSourceIndexRef.current = null;
+    setGhostInfo(null);
+    setDraggingSlotIndex(null);
+    if (!droppedPlayer || sourceIndex === null) return;
 
-    if (targetPositionIndex !== null) {
-      const playerAtTarget = newAssigned[targetPositionIndex];
-      if (playerAtTarget) {
-        // Swap: displace the player already in the target slot
-        if (sourcePositionIndex !== undefined) {
-          newAssigned[parseInt(sourcePositionIndex, 10)] = playerAtTarget;
-        } else {
-          newUnassigned = [...newUnassigned, playerAtTarget];
-        }
+    // Hit-test the final touch position against stored slot bounds
+    const fp = fieldPageRef.current;
+    let targetIndex: number | null = null;
+    for (let i = 0; i < slotLayoutsRef.current.length; i++) {
+      const sl = slotLayoutsRef.current[i];
+      if (!sl) continue;
+      const l = fp.x + sl.x - HIT_SLOP;
+      const t = fp.y + sl.y - HIT_SLOP;
+      const r = fp.x + sl.x + sl.width + HIT_SLOP;
+      const b = fp.y + sl.y + sl.height + HIT_SLOP;
+      if (screenX >= l && screenX <= r && screenY >= t && screenY <= b) {
+        targetIndex = i;
+        break;
       }
-      newAssigned[targetPositionIndex] = droppedPlayer;
-    } else {
-      newUnassigned = [...newUnassigned, droppedPlayer];
     }
 
-    setAssignedPlayers(newAssigned);
-    setUnassignedPlayers(newUnassigned);
-  };
+    const current = assignedPlayersRef.current;
+    const newAssigned = { ...current };
+    const newUnassigned = [...unassignedPlayersRef.current].filter(p => p.id !== droppedPlayer.id);
+    newAssigned[sourceIndex] = null;
+
+    if (targetIndex !== null && targetIndex !== sourceIndex) {
+      const displaced = current[targetIndex];
+      if (displaced) {
+        newAssigned[sourceIndex] = displaced; // swap displaced back to source
+      }
+      newAssigned[targetIndex] = droppedPlayer;
+      setAssignedPlayers(newAssigned);
+      setUnassignedPlayers(newUnassigned);
+    } else if (targetIndex === sourceIndex) {
+      newAssigned[sourceIndex] = droppedPlayer; // dropped back on own slot
+      setAssignedPlayers(newAssigned);
+    } else {
+      // Missed all slots → return to bench
+      setAssignedPlayers(newAssigned);
+      setUnassignedPlayers([...newUnassigned, droppedPlayer]);
+    }
+  }, []);
+
+  // ── Cancel drag (gesture interrupted) ──
+  const cancelDrag = useCallback(() => {
+    dragSourceIndexRef.current = null;
+    setGhostInfo(null);
+    setDraggingSlotIndex(null);
+  }, []);
+
+  // ── Ghost animated style ──
+  const ghostAnimStyle = useAnimatedStyle(() => ({
+    opacity: isDragging.value,
+    transform: [
+      { translateX: ghostX.value - NODE_SIZE / 2 },
+      { translateY: ghostY.value - NODE_SIZE / 2 - rootOffsetY.value },
+    ],
+  }));
 
   const getInitials = (name: string) =>
     name.split(' ').map(n => n[0]).join('').toUpperCase();
@@ -237,121 +325,197 @@ const TacticsBoardScreen = ({ route }: Props) => {
   const filledCount = Object.values(assignedPlayers).filter(p => p !== null).length;
 
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
-      <DraxProvider>
-        <View style={styles.container}>
+    <GestureHandlerRootView style={styles.rootView}>
+      <View
+        ref={rootRef}
+        style={styles.container}
+        onLayout={() => {
+          rootRef.current?.measure((_x, _y, _w, _h, _px, pageY) => {
+            rootOffsetY.value = pageY;
+          });
+        }}
+      >
 
-          {/* ── Formation Chips ── */}
+        {/* ── Formation Chips ── */}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.chipsContainer}
+          contentContainerStyle={styles.chipsContent}
+        >
+          {Object.keys(FORMATIONS[format]).map(f => (
+            <TouchableOpacity
+              key={f}
+              onPress={() => handleFormationChange(f)}
+              style={[styles.chip, formation === f && styles.chipActive]}
+              accessibilityRole="button"
+              accessibilityLabel={`Select ${f} formation`}
+            >
+              <Text style={[styles.chipText, formation === f && styles.chipTextActive]}>{f}</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+
+        {/* ── Field ── */}
+        <View
+          ref={fieldRef}
+          style={styles.field}
+          onLayout={() => {
+            fieldRef.current?.measure((_x, _y, _w, _h, pageX, pageY) => {
+              fieldPageRef.current = { x: pageX, y: pageY };
+            });
+          }}
+        >
+          <FieldBackground />
+
+          {(FORMATIONS[format][formation] ?? []).map((pos, index) => {
+            const player = assignedPlayers[index];
+            const isGK = index === 0;
+            const isDraggingThis = draggingSlotIndex === index;
+            const showDropTarget = selectedBenchPlayer !== null && !player;
+
+            const panGesture = Gesture.Pan()
+              .enabled(player !== null && !isDraggingThis)
+              .minDistance(10)
+              .onStart(e => {
+                'worklet';
+                ghostX.value = e.absoluteX;
+                ghostY.value = e.absoluteY;
+                isDragging.value = 1;
+                runOnJS(onDragStart)(index);
+              })
+              .onUpdate(e => {
+                'worklet';
+                ghostX.value = e.absoluteX;
+                ghostY.value = e.absoluteY;
+              })
+              .onEnd(e => {
+                'worklet';
+                isDragging.value = 0;
+                runOnJS(onDragEnd)(e.absoluteX, e.absoluteY);
+              })
+              .onFinalize((_e, success) => {
+                'worklet';
+                if (!success) {
+                  isDragging.value = 0;
+                  runOnJS(cancelDrag)();
+                }
+              });
+
+            const tapGesture = Gesture.Tap().onEnd(() => {
+              'worklet';
+              runOnJS(handleSlotTap)(index);
+            });
+
+            return (
+              <GestureDetector key={`${formation}-${index}`} gesture={Gesture.Race(panGesture, tapGesture)}>
+                <View
+                  style={[
+                    styles.slot,
+                    { top: pos.top, left: pos.left },
+                    player && !isDraggingThis
+                      ? [styles.playerNode, isGK && styles.gkNode]
+                      : [styles.emptySlot, isGK && styles.emptyGkSlot],
+                    isDraggingThis && styles.slotDragging,
+                    showDropTarget && styles.slotDropTarget,
+                  ]}
+                  onLayout={e => {
+                    slotLayoutsRef.current[index] = e.nativeEvent.layout;
+                  }}
+                >
+                  {player && !isDraggingThis ? (
+                    <>
+                      <Text style={styles.nodeInitials}>{getInitials(player.name)}</Text>
+                      <Text style={styles.nodeJersey}>#{player.jerseyNumber}</Text>
+                    </>
+                  ) : (
+                    <Text style={styles.emptySlotLabel}>{pos.label}</Text>
+                  )}
+                </View>
+              </GestureDetector>
+            );
+          })}
+
+          {/* Start Game FAB — bottom-right of field */}
+          <TouchableOpacity
+            style={styles.fab}
+            onPress={() => navigation.navigate('SubstitutionMatrix', { assignedPlayers, unassignedPlayers })}
+            accessibilityRole="button"
+            accessibilityLabel="Start Game"
+          >
+            <Icon name="play" size={18} color="white" />
+            <Text style={styles.fabText}>Start</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* ── Bench ── */}
+        <View style={styles.bench}>
+          <View style={styles.benchHeader}>
+            <Text style={styles.benchLabel}>
+              {'Bench '}
+              <Text style={styles.benchCount}>{unassignedPlayers.length}</Text>
+              {'   ·   Field '}
+              <Text style={[styles.benchCount, filledCount === playerCount && styles.benchFull]}>
+                {filledCount}/{playerCount}
+              </Text>
+            </Text>
+            <TouchableOpacity
+              onPress={handleClear}
+              style={styles.clearBtn}
+              accessibilityRole="button"
+              accessibilityLabel="Clear all positions"
+            >
+              <Icon name="refresh-outline" size={14} color={theme.colors.border} />
+              <Text style={styles.clearBtnText}> Clear</Text>
+            </TouchableOpacity>
+          </View>
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
-            style={styles.chipsContainer}
-            contentContainerStyle={styles.chipsContent}
+            contentContainerStyle={styles.benchScrollContent}
           >
-            {Object.keys(FORMATIONS[format]).map(f => (
-              <TouchableOpacity
-                key={f}
-                onPress={() => handleFormationChange(f)}
-                style={[styles.chip, formation === f && styles.chipActive]}
-                accessibilityRole="button"
-                accessibilityLabel={`Select ${f} formation`}
-              >
-                <Text style={[styles.chipText, formation === f && styles.chipTextActive]}>{f}</Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-
-          {/* ── Field ── */}
-          <View style={styles.field}>
-            <FieldBackground />
-
-            {(FORMATIONS[format][formation] ?? []).map((pos, index) => {
-              const player = assignedPlayers[index];
-              const isGK = index === 0;
-              return (
-                <DraxView
-                  key={`${formation}-${index}`}
-                  style={[styles.dropZone, { top: pos.top, left: pos.left }]}
-                  receivingStyle={styles.dropZoneReceiving}
-                  payload={player}
-                  onReceiveDragDrop={e => handleDrop(e, index)}
+            {unassignedPlayers.length === 0 ? (
+              <View style={styles.benchEmpty}>
+                <Text style={styles.benchEmptyText}>✓ All players placed</Text>
+              </View>
+            ) : (
+              unassignedPlayers.map(p => (
+                <TouchableOpacity
+                  key={p.id}
+                  onPress={() => handleBenchPlayerTap(p)}
+                  style={[
+                    styles.benchNode,
+                    selectedBenchPlayer?.id === p.id && styles.benchNodeSelected,
+                  ]}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Select ${p.name}`}
                 >
-                  {player ? (
-                    <Animated.View layout={Layout.springify()}>
-                      <DraxView payload={player} style={[styles.playerNode, isGK && styles.gkNode]}>
-                        <Text style={styles.nodeInitials}>{getInitials(player.name)}</Text>
-                        <Text style={styles.nodeJersey}>#{player.jerseyNumber}</Text>
-                      </DraxView>
-                    </Animated.View>
-                  ) : (
-                    <View style={[styles.emptySlot, isGK && styles.emptyGkSlot]}>
-                      <Text style={styles.emptySlotLabel}>{pos.label}</Text>
-                    </View>
-                  )}
-                </DraxView>
-              );
-            })}
-
-            {/* Start Game FAB — bottom-right of field */}
-            <TouchableOpacity
-              style={styles.fab}
-              onPress={() => navigation.navigate('SubstitutionMatrix', { assignedPlayers, unassignedPlayers })}
-              accessibilityRole="button"
-              accessibilityLabel="Start Game"
-            >
-              <Icon name="play" size={18} color="white" />
-              <Text style={styles.fabText}>Start</Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* ── Bench ── */}
-          <DraxView style={styles.bench} onReceiveDragDrop={e => handleDrop(e, null)}>
-            <View style={styles.benchHeader}>
-              <Text style={styles.benchLabel}>
-                {'Bench '}
-                <Text style={styles.benchCount}>{unassignedPlayers.length}</Text>
-                {'   ·   Field '}
-                <Text style={[styles.benchCount, filledCount === playerCount && styles.benchFull]}>
-                  {filledCount}/{playerCount}
-                </Text>
-              </Text>
-              <TouchableOpacity
-                onPress={handleClear}
-                style={styles.clearBtn}
-                accessibilityRole="button"
-                accessibilityLabel="Clear all positions"
-              >
-                <Icon name="refresh-outline" size={14} color={theme.colors.border} />
-                <Text style={styles.clearBtnText}> Clear</Text>
-              </TouchableOpacity>
-            </View>
-            <DraxList
-              data={unassignedPlayers}
-              keyExtractor={item => item.id}
-              renderItemContent={({ item }) => (
-                <Animated.View layout={Layout.springify()}>
-                  <DraxView payload={item} style={styles.benchNode}>
-                    <Text style={styles.benchInitials}>{getInitials(item.name)}</Text>
-                    <Text style={styles.benchJersey}>#{item.jerseyNumber}</Text>
-                  </DraxView>
-                </Animated.View>
-              )}
-              horizontal
-              ListEmptyComponent={
-                <View style={styles.benchEmpty}>
-                  <Text style={styles.benchEmptyText}>✓ All players placed</Text>
-                </View>
-              }
-            />
-          </DraxView>
-
+                  <Text style={styles.benchInitials}>{getInitials(p.name)}</Text>
+                  <Text style={styles.benchJersey}>#{p.jerseyNumber}</Text>
+                </TouchableOpacity>
+              ))
+            )}
+          </ScrollView>
         </View>
-      </DraxProvider>
+
+      </View>
+
+      {/* ── Drag ghost — rendered outside container so it floats over everything ── */}
+      {ghostInfo && (
+        <Animated.View
+          style={[styles.ghostNode, ghostInfo.isGK && styles.gkNode, ghostAnimStyle]}
+          pointerEvents="none"
+        >
+          <Text style={styles.nodeInitials}>{getInitials(ghostInfo.player.name)}</Text>
+          <Text style={styles.nodeJersey}>#{ghostInfo.player.jerseyNumber}</Text>
+        </Animated.View>
+      )}
     </GestureHandlerRootView>
   );
 };
 
 const styles = StyleSheet.create({
+  rootView: { flex: 1 },
   container: { flex: 1, backgroundColor: theme.colors.background },
 
   // ── Formation chips
@@ -394,24 +558,31 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
 
-  // ── Drop zones
-  dropZone: {
+  // ── Slot circles on the field
+  slot: {
     position: 'absolute',
-    width: 52,
-    height: 52,
-    borderRadius: 26,
+    width: NODE_SIZE,
+    height: NODE_SIZE,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  // Glow effect when a player is dragged over a slot
-  dropZoneReceiving: {
-    backgroundColor: 'rgba(255,255,255,0.2)',
+  // Faded placeholder shown at the source slot while the player is being dragged
+  slotDragging: {
+    opacity: 0.35,
     borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.6)',
+    borderRadius: NODE_SIZE / 2,
+    backgroundColor: theme.colors.primary,
+  },
+  // Glows when a bench player is selected and the slot is empty
+  slotDropTarget: {
     borderColor: theme.colors.accent,
-    borderRadius: 26,
+    borderWidth: 2,
+    borderRadius: NODE_SIZE / 2,
+    backgroundColor: 'rgba(255,193,7,0.25)',
   },
 
-  // Empty slot — visible dashed circle with role label
+  // Empty slot
   emptySlot: {
     width: 46,
     height: 46,
@@ -422,7 +593,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: 'rgba(0,0,0,0.18)',
   },
-  // GK empty slot uses amber tint to match the GK node
   emptyGkSlot: {
     borderColor: 'rgba(245,158,11,0.8)',
     backgroundColor: 'rgba(245,158,11,0.15)',
@@ -450,10 +620,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.35,
     shadowRadius: 3,
   },
-  // Goalkeeper is amber/gold — universal convention
-  gkNode: {
-    backgroundColor: '#F59E0B',
-  },
+  gkNode: { backgroundColor: '#F59E0B' },
   nodeInitials: {
     color: 'white',
     fontWeight: 'bold',
@@ -464,6 +631,27 @@ const styles = StyleSheet.create({
     color: 'rgba(255,255,255,0.85)',
     fontSize: 9,
     lineHeight: 11,
+  },
+
+  // ── Ghost (floating player bubble that follows the finger)
+  ghostNode: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    width: NODE_SIZE,
+    height: NODE_SIZE,
+    borderRadius: NODE_SIZE / 2,
+    backgroundColor: theme.colors.primary,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.9)',
+    elevation: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 6,
+    zIndex: 999,
   },
 
   // ── FAB
@@ -515,7 +703,6 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: theme.colors.primary,
   },
-  // Turns green when the full 11 are on the field
   benchFull: { color: '#15803d' },
   clearBtn: {
     flexDirection: 'row',
@@ -527,8 +714,12 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: theme.colors.border,
   },
-
-  // Bench nodes — outlined (white bg, blue border) to visually differ from field nodes
+  benchScrollContent: {
+    paddingHorizontal: theme.spacing.sm,
+    paddingVertical: 4,
+    alignItems: 'center',
+  },
+  // Outlined style (white bg, blue border) to visually differ from filled field nodes
   benchNode: {
     width: 50,
     height: 50,
@@ -540,6 +731,13 @@ const styles = StyleSheet.create({
     borderColor: theme.colors.primary,
     marginHorizontal: 4,
     elevation: 2,
+  },
+  // Selected bench player gets an accent ring + slight scale
+  benchNodeSelected: {
+    backgroundColor: theme.colors.accent,
+    borderColor: theme.colors.primary,
+    borderWidth: 3,
+    transform: [{ scale: 1.12 }],
   },
   benchInitials: {
     color: theme.colors.primary,
@@ -553,7 +751,6 @@ const styles = StyleSheet.create({
     lineHeight: 11,
     opacity: 0.6,
   },
-
   benchEmpty: {
     height: 50,
     paddingHorizontal: theme.spacing.md,
