@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { View, Text, StyleSheet, ScrollView, FlatList, TouchableOpacity, TextInput } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, FlatList, TouchableOpacity, TextInput, Alert } from 'react-native';
 import { RouteProp, useNavigation } from '@react-navigation/native';
 import { Player } from '../models/Player';
 import { theme } from '../theme';
@@ -51,7 +51,7 @@ const SubstitutionMatrixScreen = ({ route }: Props) => {
     ...unassignedPlayers,
   ].sort((a, b) => a.name.localeCompare(b.name)), [assignedPlayers, unassignedPlayers]);
 
-  const [playerStatus, setPlayerStatus] = useState(() => {
+  const buildInitialStatus = () => {
     const initialStatus: { [playerId: string]: ('on' | 'off')[] } = {};
     allPlayers.forEach(player => {
       initialStatus[player.id] = Array(NUM_INTERVALS).fill('off');
@@ -61,7 +61,9 @@ const SubstitutionMatrixScreen = ({ route }: Props) => {
       }
     });
     return initialStatus;
-  });
+  };
+
+  const [playerStatus, setPlayerStatus] = useState(buildInitialStatus);
 
   useEffect(() => {
     if (isActive) {
@@ -143,6 +145,27 @@ const SubstitutionMatrixScreen = ({ route }: Props) => {
   const handleReset = () => {
     setIsActive(false);
     setGameTime(0);
+  };
+
+  const handleNewGame = () => {
+    Alert.alert(
+      'New Game',
+      'This will reset the timer, scoreboard, and all substitution records. Start fresh?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'New Game',
+          style: 'destructive',
+          onPress: () => {
+            setIsActive(false);
+            setGameTime(0);
+            setHomeScore(0);
+            setAwayScore(0);
+            setPlayerStatus(buildInitialStatus());
+          },
+        },
+      ],
+    );
   };
 
   const formatTime = (time: number) => {
@@ -346,6 +369,17 @@ const SubstitutionMatrixScreen = ({ route }: Props) => {
             <Icon name="refresh-circle-outline" size={36} color={theme.colors.primary} />
           </TouchableOpacity>
         </View>
+
+        {/* New Game button */}
+        <TouchableOpacity
+          onPress={handleNewGame}
+          style={styles.newGameBtn}
+          accessibilityLabel="Start a new game"
+          accessibilityRole="button"
+        >
+          <Icon name="flag-outline" size={14} color={theme.colors.danger} />
+          <Text style={styles.newGameBtnText}>New Game</Text>
+        </TouchableOpacity>
       </View>
 
       {/* ── Substitution Suggestion Banner ── */}
@@ -633,6 +667,21 @@ const styles = StyleSheet.create({
     color: theme.colors.text,
     opacity: 0.35,
     fontWeight: '600',
+  },
+
+  // New Game
+  newGameBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    marginTop: theme.spacing.sm,
+    paddingVertical: theme.spacing.xs,
+  },
+  newGameBtnText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: theme.colors.danger,
   },
 });
 
