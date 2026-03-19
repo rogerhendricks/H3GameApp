@@ -42,3 +42,10 @@ export const deletePlayerDB = async (id: string) => {
   await db.executeSql('DELETE FROM players WHERE id = ?', [id]);
 };
 
+export const updatePlayerDB = async (player: Player): Promise<void> => {
+  // const db = await openDB();
+  await db.executeSql(
+    `UPDATE players SET name = ?, jerseyNumber = ?, primaryPosition = ?, secondaryPosition = ? WHERE id = ?`,
+    [player.name, player.jerseyNumber, player.primaryPosition, player.secondaryPosition ?? '', player.id]
+  );
+};

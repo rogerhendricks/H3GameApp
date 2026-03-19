@@ -22,32 +22,35 @@ type Props = {
   route: SubstitutionMatrixScreenRouteProp;
 };
 
-const GAME_DURATION = 90 * 60; 
+const GAME_DURATION = 90 * 60;
 const TIME_INTERVAL = 10 * 60;
-const NUM_INTERVALS = GAME_DURATION / TIME_INTERVAL;
+const NUM_INTERVALS = GAME_DURATION / TIME_INTERVAL; // 9 intervals
 const CIRCLE_RADIUS = 60;
 const CIRCLE_CIRCUMFERENCE = 2 * Math.PI * CIRCLE_RADIUS;
-
+const INTERVAL_LABELS = Array.from({ length: NUM_INTERVALS }, (_, i) => `${i * 10}'`);
+const PLAYER_NAME_COL_WIDTH = 110;
+const STATUS_BLOCK_SIZE = 22;
+const PLAYTIME_COL_WIDTH = 36;
 
 const SubstitutionMatrixScreen = ({ route }: Props) => {
   const { assignedPlayers, unassignedPlayers } = route.params;
   const [gameTime, setGameTime] = useState(0);
   const [isActive, setIsActive] = useState(false);
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const allPlayers = useMemo(() => [
-    ...Object.values(assignedPlayers).filter((p): p is Player => p !== null), 
-    ...unassignedPlayers
+    ...Object.values(assignedPlayers).filter((p): p is Player => p !== null),
+    ...unassignedPlayers,
   ].sort((a, b) => a.name.localeCompare(b.name)), [assignedPlayers, unassignedPlayers]);
 
   const [playerStatus, setPlayerStatus] = useState(() => {
     const initialStatus: { [playerId: string]: ('on' | 'off')[] } = {};
     allPlayers.forEach(player => {
-        initialStatus[player.id] = Array(NUM_INTERVALS).fill('off');
-        const isOnField = Object.values(assignedPlayers).some(p => p?.id === player.id);
-        if (isOnField) {
-            initialStatus[player.id][0] = 'on';
-        }
+      initialStatus[player.id] = Array(NUM_INTERVALS).fill('off');
+      const isOnField = Object.values(assignedPlayers).some(p => p?.id === player.id);
+      if (isOnField) {
+        initialStatus[player.id][0] = 'on';
+      }
     });
     return initialStatus;
   });
@@ -55,38 +58,76 @@ const SubstitutionMatrixScreen = ({ route }: Props) => {
   useEffect(() => {
     if (isActive) {
       timerRef.current = setInterval(() => {
-        setGameTime(prev => prev + 1);
+        setGameTime(prev => {
+          if (prev >= GAME_DURATION) {
+            clearInterval(timerRef.current!);
+            setIsActive(false);
+            return GAME_DURATION;
+          }
+          return prev + 1;
+        });
       }, 1000);
-    } else if(timerRef.current) {
+    } else if (timerRef.current) {
       clearInterval(timerRef.current);
     }
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
   }, [isActive]);
-  
-  const currentInterval = Math.floor(gameTime / TIME_INTERVAL);
 
-  const longestBenchPlayer = useMemo(() => {
-    let longestBench = -1;
-    let playerId = null;
+  const currentInterval = Math.min(Math.floor(gameTime / TIME_INTERVAL), NUM_INTERVALS - 1);
+
+  // Find the bench player who has been off the field the longest.
+  // Lower lastIndexOf('on') = sat out longer. -1 = never played.
+  const longestBenchPlayerId = useMemo(() => {
+    let earliestLastOn = Infinity;
+    let suggestedId: string | null = null;
 
     allPlayers.forEach(p => {
-        const benchDuration = playerStatus[p.id].slice(0, currentInterval + 1).lastIndexOf('on');
-        if (benchDuration > longestBench) {
-            longestBench = benchDuration;
-            playerId = p.id;
+      const statusSoFar = playerStatus[p.id].slice(0, currentInterval + 1);
+      const isCurrentlyOff = statusSoFar[statusSoFar.length - 1] === 'off';
+      if (isCurrentlyOff) {
+        const lastOnIndex = statusSoFar.lastIndexOf('on'); // -1 if never played
+        if (lastOnIndex < earliestLastOn) {
+          earliestLastOn = lastOnIndex;
+          suggestedId = p.id;
         }
+      }
     });
 
-    return playerId;
+    return suggestedId;
   }, [playerStatus, currentInterval, allPlayers]);
 
+  // Find the on-field player who has played the most intervals (candidate to sub out).
+  const longestFieldPlayerId = useMemo(() => {
+    if (!longestBenchPlayerId) return null;
+    let mostIntervals = -1;
+    let suggestedId: string | null = null;
+
+    allPlayers.forEach(p => {
+      const statusSoFar = playerStatus[p.id].slice(0, currentInterval + 1);
+      const isCurrentlyOn = statusSoFar[statusSoFar.length - 1] === 'on';
+      if (isCurrentlyOn) {
+        const onCount = statusSoFar.filter(s => s === 'on').length;
+        if (onCount > mostIntervals) {
+          mostIntervals = onCount;
+          suggestedId = p.id;
+        }
+      }
+    });
+
+    return suggestedId;
+  }, [longestBenchPlayerId, playerStatus, currentInterval, allPlayers]);
+
+  const getPlayMinutes = (playerId: string) =>
+    playerStatus[playerId].filter(s => s === 'on').length * 10;
 
   const toggleStatus = (playerId: string, intervalIndex: number) => {
-    const newStatus = { ...playerStatus };
-    newStatus[playerId][intervalIndex] = newStatus[playerId][intervalIndex] === 'on' ? 'off' : 'on';
-    setPlayerStatus(newStatus);
+    setPlayerStatus(prev => {
+      const updated = { ...prev, [playerId]: [...prev[playerId]] };
+      updated[playerId][intervalIndex] = updated[playerId][intervalIndex] === 'on' ? 'off' : 'on';
+      return updated;
+    });
   };
 
   const handleStart = () => setIsActive(true);
@@ -105,68 +146,174 @@ const SubstitutionMatrixScreen = ({ route }: Props) => {
   const progress = gameTime / GAME_DURATION;
   const strokeDashoffset = CIRCLE_CIRCUMFERENCE * (1 - progress);
 
+  const suggestedBenchPlayer = allPlayers.find(p => p.id === longestBenchPlayerId);
+  const suggestedFieldPlayer = allPlayers.find(p => p.id === longestFieldPlayerId);
+
   return (
-    <ScrollView style={styles.container}>
-      <View style={styles.timerContainer}>
-        <Svg width={CIRCLE_RADIUS * 2 + 20} height={CIRCLE_RADIUS * 2 + 20}>
+    <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
+
+      {/* ── Timer ── */}
+      <View style={styles.timerSection}>
+        <View style={styles.timerCircleWrapper}>
+          <Svg width={CIRCLE_RADIUS * 2 + 20} height={CIRCLE_RADIUS * 2 + 20}>
             <Circle
-                cx={CIRCLE_RADIUS + 10}
-                cy={CIRCLE_RADIUS + 10}
-                r={CIRCLE_RADIUS}
-                stroke={theme.colors.border}
-                strokeWidth="10"
-                fill="transparent"
+              cx={CIRCLE_RADIUS + 10}
+              cy={CIRCLE_RADIUS + 10}
+              r={CIRCLE_RADIUS}
+              stroke={theme.colors.border}
+              strokeWidth="10"
+              fill="transparent"
             />
             <Circle
-                cx={CIRCLE_RADIUS + 10}
-                cy={CIRCLE_RADIUS + 10}
-                r={CIRCLE_RADIUS}
-                stroke={theme.colors.primary}
-                strokeWidth="10"
-                fill="transparent"
-                strokeDasharray={CIRCLE_CIRCUMFERENCE}
-                strokeDashoffset={strokeDashoffset}
-                rotation="-90"
-                originX={`${CIRCLE_RADIUS + 10}`}
-                originY={`${CIRCLE_RADIUS + 10}`}
+              cx={CIRCLE_RADIUS + 10}
+              cy={CIRCLE_RADIUS + 10}
+              r={CIRCLE_RADIUS}
+              stroke={theme.colors.primary}
+              strokeWidth="10"
+              fill="transparent"
+              strokeDasharray={CIRCLE_CIRCUMFERENCE}
+              strokeDashoffset={strokeDashoffset}
+              rotation="-90"
+              originX={`${CIRCLE_RADIUS + 10}`}
+              originY={`${CIRCLE_RADIUS + 10}`}
             />
-        </Svg>
-        <Text style={styles.timer}>{formatTime(gameTime)}</Text>
+          </Svg>
+          {/* Overlaid text — centered via absoluteFill */}
+          <View style={StyleSheet.absoluteFill} pointerEvents="none">
+            <View style={styles.timerTextWrapper}>
+              <Text style={styles.timerText}>{formatTime(gameTime)}</Text>
+              <Text style={styles.timerSubText}>
+                {gameTime >= GAME_DURATION ? 'Full Time' : `${Math.floor(gameTime / 60)}'`}
+              </Text>
+            </View>
+          </View>
+        </View>
+
         <View style={styles.timerControls}>
-            <TouchableOpacity onPress={handleStart} disabled={isActive} style={styles.controlButton}>
-                <Icon name="play-outline" size={30} color={isActive ? theme.colors.border : theme.colors.primary} />
-            </TouchableOpacity>
-            <TouchableOpacity onPress={handleStop} disabled={!isActive} style={styles.controlButton}>
-                <Icon name="pause-outline" size={30} color={!isActive ? theme.colors.border : theme.colors.primary} />
-            </TouchableOpacity>
-            <TouchableOpacity onPress={handleReset} style={styles.controlButton}>
-                <Icon name="refresh-outline" size={30} color={theme.colors.primary} />
-            </TouchableOpacity>
+          <TouchableOpacity
+            onPress={handleStart}
+            disabled={isActive || gameTime >= GAME_DURATION}
+            style={styles.controlButton}
+            accessibilityLabel="Start timer"
+            accessibilityRole="button"
+          >
+            <Icon
+              name="play-circle-outline"
+              size={36}
+              color={isActive || gameTime >= GAME_DURATION ? theme.colors.border : theme.colors.primary}
+            />
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={handleStop}
+            disabled={!isActive}
+            style={styles.controlButton}
+            accessibilityLabel="Pause timer"
+            accessibilityRole="button"
+          >
+            <Icon
+              name="pause-circle-outline"
+              size={36}
+              color={!isActive ? theme.colors.border : theme.colors.primary}
+            />
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={handleReset}
+            style={styles.controlButton}
+            accessibilityLabel="Reset timer"
+            accessibilityRole="button"
+          >
+            <Icon name="refresh-circle-outline" size={36} color={theme.colors.primary} />
+          </TouchableOpacity>
         </View>
       </View>
+
+      {/* ── Substitution Suggestion Banner ── */}
+      {suggestedBenchPlayer ? (
+        <View style={styles.suggestionBanner}>
+          <Icon name="swap-horizontal-outline" size={18} color={theme.colors.text} style={styles.suggestionIcon} />
+          <View style={styles.suggestionContent}>
+            <Text style={styles.suggestionLabel}>Suggested Substitution</Text>
+            <Text style={styles.suggestionDetail}>
+              <Text style={styles.suggestionIn}>▲ {suggestedBenchPlayer.name}</Text>
+              {suggestedFieldPlayer ? (
+                <Text style={styles.suggestionOut}>{'  ▼ '}{suggestedFieldPlayer.name}</Text>
+              ) : null}
+            </Text>
+          </View>
+        </View>
+      ) : null}
+
+      {/* ── Matrix ── */}
       <View style={styles.matrixContainer}>
-        <FlatList
-            data={allPlayers}
-            keyExtractor={item => item.id}
-            renderItem={({ item: player, index }) => (
-                <View style={[styles.playerRow, index % 2 === 1 && styles.alternatingRow, player.id === longestBenchPlayer && styles.suggestion]}>
-                    <Text style={styles.playerName}>{player.name}</Text>
+
+        {/* Legend */}
+        <View style={styles.legend}>
+          <View style={[styles.legendBlock, { backgroundColor: theme.colors.primary }]} />
+          <Text style={styles.legendText}>On Field</Text>
+          <View style={[styles.legendBlock, { backgroundColor: theme.colors.card, borderColor: theme.colors.border, borderWidth: 1 }]} />
+          <Text style={styles.legendText}>Bench</Text>
+          <View style={[styles.legendBlock, { backgroundColor: theme.colors.card, borderColor: theme.colors.accent, borderWidth: 2 }]} />
+          <Text style={styles.legendText}>Current</Text>
+        </View>
+
+        {/* Horizontally scrollable header + rows */}
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+          <View>
+            {/* Header row */}
+            <View style={styles.headerRow}>
+              <View style={{ width: PLAYER_NAME_COL_WIDTH }} />
+              {INTERVAL_LABELS.map(label => (
+                <Text key={label} style={styles.intervalLabel}>{label}</Text>
+              ))}
+              <Text style={styles.playTimeHeader}>Min</Text>
+            </View>
+
+            {/* Player rows */}
+            <FlatList
+              data={allPlayers}
+              keyExtractor={item => item.id}
+              scrollEnabled={false}
+              renderItem={({ item: player, index }) => {
+                const isBenchSuggestion = player.id === longestBenchPlayerId;
+                const isFieldSuggestion = player.id === longestFieldPlayerId;
+                return (
+                  <View
+                    style={[
+                      styles.playerRow,
+                      index % 2 === 1 && styles.alternatingRow,
+                      isBenchSuggestion && styles.benchSuggestionRow,
+                      isFieldSuggestion && styles.fieldSuggestionRow,
+                    ]}
+                  >
+                    <Text style={styles.playerName} numberOfLines={1}>
+                      {isBenchSuggestion ? '▲ ' : isFieldSuggestion ? '▼ ' : '   '}
+                      {player.name}
+                    </Text>
                     <View style={styles.statusRow}>
-                        {playerStatus[player.id].map((status, index) => (
-                          <TouchableOpacity key={index} onPress={() => toggleStatus(player.id, index)}>
-                            <View 
-                                style={[
-                                    styles.statusBlock,
-                                    { backgroundColor: status === 'on' ? theme.colors.primary : theme.colors.border },
-                                    index === currentInterval && styles.activeInterval
-                                ]} 
-                            />
-                          </TouchableOpacity>
-                        ))}
+                      {playerStatus[player.id].map((status, idx) => (
+                        <TouchableOpacity
+                          key={idx}
+                          onPress={() => toggleStatus(player.id, idx)}
+                          accessibilityLabel={`Toggle ${player.name} interval ${idx * 10} minutes`}
+                          accessibilityRole="button"
+                        >
+                          <View
+                            style={[
+                              styles.statusBlock,
+                              status === 'on' ? styles.statusOn : styles.statusOff,
+                              idx === currentInterval && styles.activeInterval,
+                            ]}
+                          />
+                        </TouchableOpacity>
+                      ))}
                     </View>
-                </View>
-            )}
-        />
+                    <Text style={styles.playTimeText}>{getPlayMinutes(player.id)}'</Text>
+                  </View>
+                );
+              }}
+            />
+          </View>
+        </ScrollView>
       </View>
     </ScrollView>
   );
@@ -174,18 +321,104 @@ const SubstitutionMatrixScreen = ({ route }: Props) => {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.colors.background },
-  timerContainer: { padding: theme.spacing.lg, alignItems: 'center' },
-  timer: { ...theme.typography.h1, position: 'absolute', top: '50%', left: '50%', transform: [{translateX: -50}, {translateY: -20}], color: theme.colors.text },
-  timerControls: { flexDirection: 'row', justifyContent: 'space-around', width: '100%', marginTop: theme.spacing.md },
+  contentContainer: { paddingBottom: theme.spacing.xl },
+
+  // Timer
+  timerSection: { alignItems: 'center', padding: theme.spacing.lg, backgroundColor: theme.colors.card, marginBottom: theme.spacing.sm },
+  timerCircleWrapper: {
+    width: CIRCLE_RADIUS * 2 + 20,
+    height: CIRCLE_RADIUS * 2 + 20,
+  },
+  timerTextWrapper: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  timerText: { fontSize: 28, fontWeight: 'bold', color: theme.colors.text },
+  timerSubText: { fontSize: 12, color: theme.colors.border, marginTop: 2 },
+  timerControls: { flexDirection: 'row', justifyContent: 'center', gap: theme.spacing.xl, marginTop: theme.spacing.md },
   controlButton: { padding: theme.spacing.sm },
-  matrixContainer: { padding: theme.spacing.sm },
-  playerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 5, padding: theme.spacing.sm, borderRadius: 5 },
+
+  // Suggestion banner
+  suggestionBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: theme.colors.accent,
+    marginHorizontal: theme.spacing.md,
+    marginBottom: theme.spacing.sm,
+    padding: theme.spacing.sm,
+    borderRadius: 8,
+  },
+  suggestionIcon: { marginRight: theme.spacing.sm },
+  suggestionContent: { flex: 1 },
+  suggestionLabel: { fontSize: 11, fontWeight: '600', color: theme.colors.text, opacity: 0.7, textTransform: 'uppercase', letterSpacing: 0.5 },
+  suggestionDetail: { marginTop: 2 },
+  suggestionIn: { fontSize: 14, fontWeight: 'bold', color: '#1a6e00' },
+  suggestionOut: { fontSize: 14, fontWeight: 'bold', color: '#8b0000' },
+
+  // Matrix
+  matrixContainer: { paddingHorizontal: theme.spacing.sm },
+  legend: { flexDirection: 'row', alignItems: 'center', gap: theme.spacing.xs, marginBottom: theme.spacing.sm, marginLeft: theme.spacing.xs },
+  legendBlock: { width: 14, height: 14, borderRadius: 3 },
+  legendText: { ...theme.typography.body, fontSize: 12, color: theme.colors.text, opacity: 0.7, marginRight: theme.spacing.sm },
+
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: theme.spacing.xs,
+    marginBottom: 2,
+  },
+  intervalLabel: {
+    width: STATUS_BLOCK_SIZE + 2,
+    fontSize: 10,
+    color: theme.colors.border,
+    textAlign: 'center',
+  },
+  playTimeHeader: {
+    width: PLAYTIME_COL_WIDTH,
+    fontSize: 10,
+    color: theme.colors.border,
+    textAlign: 'center',
+    fontWeight: 'bold',
+  },
+
+  playerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: theme.spacing.xs,
+    paddingHorizontal: theme.spacing.xs,
+    borderRadius: 6,
+    marginBottom: 2,
+  },
   alternatingRow: { backgroundColor: theme.colors.card },
-  playerName: { ...theme.typography.body, width: 120, },
-  statusRow: { flexDirection: 'row' },
-  statusBlock: { width: 18, height: 18, borderWidth: 1, borderColor: '#ccc' },
+  benchSuggestionRow: { backgroundColor: '#e6f4ea', borderWidth: 1, borderColor: '#1a6e00' },
+  fieldSuggestionRow: { backgroundColor: '#fde8e8', borderWidth: 1, borderColor: '#8b0000' },
+
+  playerName: {
+    ...theme.typography.body,
+    fontSize: 13,
+    width: PLAYER_NAME_COL_WIDTH,
+    color: theme.colors.text,
+  },
+  statusRow: { flexDirection: 'row', gap: 2 },
+  statusBlock: {
+    width: STATUS_BLOCK_SIZE,
+    height: STATUS_BLOCK_SIZE,
+    borderRadius: 4,
+    borderWidth: 1,
+  },
+  statusOn: { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
+  statusOff: { backgroundColor: theme.colors.background, borderColor: theme.colors.border },
   activeInterval: { borderWidth: 2, borderColor: theme.colors.accent },
-  suggestion: { backgroundColor: theme.colors.accent, opacity: 0.8 }
+
+  playTimeText: {
+    width: PLAYTIME_COL_WIDTH,
+    fontSize: 12,
+    fontWeight: '600',
+    color: theme.colors.text,
+    textAlign: 'center',
+    marginLeft: 4,
+  },
 });
 
 export default SubstitutionMatrixScreen;
