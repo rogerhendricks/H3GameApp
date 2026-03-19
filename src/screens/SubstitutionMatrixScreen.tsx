@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { View, Text, StyleSheet, ScrollView, FlatList, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, FlatList, TouchableOpacity, TextInput } from 'react-native';
 import { RouteProp, useNavigation } from '@react-navigation/native';
 import { Player } from '../models/Player';
 import { theme } from '../theme';
@@ -37,6 +37,14 @@ const SubstitutionMatrixScreen = ({ route }: Props) => {
   const [gameTime, setGameTime] = useState(0);
   const [isActive, setIsActive] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Scoreboard
+  const [homeScore, setHomeScore] = useState(0);
+  const [awayScore, setAwayScore] = useState(0);
+  const [homeName, setHomeName] = useState('Home');
+  const [awayName, setAwayName] = useState('Away');
+  const [editingHome, setEditingHome] = useState(false);
+  const [editingAway, setEditingAway] = useState(false);
 
   const allPlayers = useMemo(() => [
     ...Object.values(assignedPlayers).filter((p): p is Player => p !== null),
@@ -151,6 +159,119 @@ const SubstitutionMatrixScreen = ({ route }: Props) => {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
+
+      {/* ── Scoreboard ── */}
+      <View style={styles.scoreCard}>
+        <View style={styles.scoreRow}>
+
+          {/* Home Team */}
+          <View style={styles.teamBlock}>
+            <TouchableOpacity
+              onPress={() => setEditingHome(true)}
+              activeOpacity={editingHome ? 1 : 0.6}
+              accessibilityLabel="Edit home team name"
+              accessibilityRole="button"
+            >
+              {editingHome ? (
+                <TextInput
+                  style={styles.teamNameInput}
+                  value={homeName}
+                  onChangeText={setHomeName}
+                  onBlur={() => setEditingHome(false)}
+                  autoFocus
+                  maxLength={14}
+                  returnKeyType="done"
+                  onSubmitEditing={() => setEditingHome(false)}
+                  selectTextOnFocus
+                />
+              ) : (
+                <Text style={styles.teamNameLabel}>{homeName}</Text>
+              )}
+            </TouchableOpacity>
+            <View style={styles.scorerRow}>
+              <TouchableOpacity
+                onPress={() => setHomeScore(s => Math.max(0, s - 1))}
+                style={styles.scoreBtn}
+                accessibilityLabel="Decrease home score"
+                accessibilityRole="button"
+              >
+                <Icon name="remove" size={18} color={theme.colors.text} />
+              </TouchableOpacity>
+              <Text style={styles.scoreDigit}>{homeScore}</Text>
+              <TouchableOpacity
+                onPress={() => setHomeScore(s => s + 1)}
+                style={styles.scoreBtn}
+                accessibilityLabel="Increase home score"
+                accessibilityRole="button"
+              >
+                <Icon name="add" size={18} color={theme.colors.text} />
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* Score divider */}
+          <View style={styles.scoreDivider}>
+            <Text style={styles.scoreDividerText}>–</Text>
+          </View>
+
+          {/* Away Team */}
+          <View style={styles.teamBlock}>
+            <TouchableOpacity
+              onPress={() => setEditingAway(true)}
+              activeOpacity={editingAway ? 1 : 0.6}
+              accessibilityLabel="Edit away team name"
+              accessibilityRole="button"
+            >
+              {editingAway ? (
+                <TextInput
+                  style={styles.teamNameInput}
+                  value={awayName}
+                  onChangeText={setAwayName}
+                  onBlur={() => setEditingAway(false)}
+                  autoFocus
+                  maxLength={14}
+                  returnKeyType="done"
+                  onSubmitEditing={() => setEditingAway(false)}
+                  selectTextOnFocus
+                />
+              ) : (
+                <Text style={styles.teamNameLabel}>{awayName}</Text>
+              )}
+            </TouchableOpacity>
+            <View style={styles.scorerRow}>
+              <TouchableOpacity
+                onPress={() => setAwayScore(s => Math.max(0, s - 1))}
+                style={styles.scoreBtn}
+                accessibilityLabel="Decrease away score"
+                accessibilityRole="button"
+              >
+                <Icon name="remove" size={18} color={theme.colors.text} />
+              </TouchableOpacity>
+              <Text style={styles.scoreDigit}>{awayScore}</Text>
+              <TouchableOpacity
+                onPress={() => setAwayScore(s => s + 1)}
+                style={styles.scoreBtn}
+                accessibilityLabel="Increase away score"
+                accessibilityRole="button"
+              >
+                <Icon name="add" size={18} color={theme.colors.text} />
+              </TouchableOpacity>
+            </View>
+          </View>
+
+        </View>
+
+        {/* Reset score */}
+        <TouchableOpacity
+          style={styles.resetScoreBtn}
+          onPress={() => { setHomeScore(0); setAwayScore(0); }}
+          accessibilityLabel="Reset score to 0–0"
+          accessibilityRole="button"
+        >
+          <Icon name="refresh-outline" size={12} color={theme.colors.text} />
+          <Text style={styles.resetScoreText}>Reset Score</Text>
+        </TouchableOpacity>
+      </View>
 
       {/* ── Timer ── */}
       <View style={styles.timerSection}>
@@ -418,6 +539,100 @@ const styles = StyleSheet.create({
     color: theme.colors.text,
     textAlign: 'center',
     marginLeft: 4,
+  },
+
+  // ── Scoreboard
+  scoreCard: {
+    backgroundColor: theme.colors.card,
+    marginHorizontal: theme.spacing.md,
+    marginTop: theme.spacing.md,
+    marginBottom: theme.spacing.sm,
+    borderRadius: 16,
+    paddingVertical: theme.spacing.md,
+    paddingHorizontal: theme.spacing.sm,
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+  },
+  scoreRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  teamBlock: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  teamNameLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: theme.colors.text,
+    opacity: 0.45,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+    marginBottom: theme.spacing.sm,
+  },
+  teamNameInput: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: theme.colors.primary,
+    letterSpacing: 0.8,
+    marginBottom: theme.spacing.sm,
+    borderBottomWidth: 1.5,
+    borderBottomColor: theme.colors.primary,
+    textAlign: 'center',
+    minWidth: 60,
+    paddingVertical: 0,
+    paddingHorizontal: 2,
+  },
+  scorerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.spacing.xs,
+  },
+  scoreBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: theme.colors.background,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  scoreDigit: {
+    fontSize: 44,
+    fontWeight: '800',
+    color: theme.colors.text,
+    minWidth: 54,
+    textAlign: 'center',
+    lineHeight: 52,
+  },
+  scoreDivider: {
+    paddingHorizontal: theme.spacing.xs,
+    paddingTop: theme.spacing.xl,
+  },
+  scoreDividerText: {
+    fontSize: 24,
+    fontWeight: '300',
+    color: theme.colors.text,
+    opacity: 0.25,
+  },
+  resetScoreBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    marginTop: theme.spacing.sm,
+    paddingVertical: theme.spacing.xs,
+  },
+  resetScoreText: {
+    fontSize: 11,
+    color: theme.colors.text,
+    opacity: 0.35,
+    fontWeight: '600',
   },
 });
 
