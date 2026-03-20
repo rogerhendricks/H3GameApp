@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
 import { RouteProp, useNavigation } from '@react-navigation/native';
 import { GestureHandlerRootView, GestureDetector, Gesture } from 'react-native-gesture-handler';
@@ -6,7 +6,8 @@ import Animated, { useSharedValue, useAnimatedStyle, runOnJS } from 'react-nativ
 
 import { Player } from '../models/Player';
 import { getPlayers } from '../database';
-import { theme } from '../theme';
+import { useTheme } from '../context/ThemeContext';
+import { AppTheme } from '../theme';
 import { NativeStackNavigationProp, NativeStackScreenProps } from '@react-navigation/native-stack';
 import FieldBackground from '../components/FieldBackground';
 import Icon from 'react-native-vector-icons/Ionicons';
@@ -162,6 +163,8 @@ const FORMATIONS: Record<GameFormat, Record<string, FormationPosition[]>> = {
 };
 
 const TacticsBoardScreen = ({ route }: Props) => {
+  const { theme } = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const navigation = useNavigation<TacticsBoardScreenNavigationProp>();
   const { activePlayers: activePlayerIds, format } = route.params;
   const playerCount = FORMAT_PLAYER_COUNT[format];
@@ -499,7 +502,7 @@ const TacticsBoardScreen = ({ route }: Props) => {
               accessibilityRole="button"
               accessibilityLabel="Clear all positions"
             >
-              <Icon name="refresh-outline" size={14} color={theme.colors.border} />
+              <Icon name="refresh-outline" size={14} color={styles.clearBtnText.color} />
               <Text style={styles.clearBtnText}> Clear</Text>
             </TouchableOpacity>
           </View>
@@ -548,46 +551,46 @@ const TacticsBoardScreen = ({ route }: Props) => {
   );
 };
 
-const styles = StyleSheet.create({
+const makeStyles = (t: AppTheme) => StyleSheet.create({
   rootView: { flex: 1 },
-  container: { flex: 1, backgroundColor: theme.colors.background },
+  container: { flex: 1, backgroundColor: t.colors.background },
 
   // ── Formation chips
   chipsContainer: {
     maxHeight: 50,
-    backgroundColor: theme.colors.card,
+    backgroundColor: t.colors.card,
     borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
+    borderBottomColor: t.colors.border,
   },
   chipsContent: {
-    paddingHorizontal: theme.spacing.sm,
-    paddingVertical: theme.spacing.sm,
+    paddingHorizontal: t.spacing.sm,
+    paddingVertical: t.spacing.sm,
     alignItems: 'center',
-    gap: theme.spacing.xs,
+    gap: t.spacing.xs,
   },
   chip: {
     paddingHorizontal: 14,
     paddingVertical: 6,
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.background,
+    borderColor: t.colors.border,
+    backgroundColor: t.colors.background,
   },
   chipActive: {
-    backgroundColor: theme.colors.primary,
-    borderColor: theme.colors.primary,
+    backgroundColor: t.colors.primary,
+    borderColor: t.colors.primary,
   },
   chipText: {
     fontSize: 13,
     fontWeight: '600',
-    color: theme.colors.text,
+    color: t.colors.text,
   },
   chipTextActive: { color: '#FFFFFF' },
 
   // ── Field
   field: {
     flex: 1,
-    margin: theme.spacing.sm,
+    margin: t.spacing.sm,
     overflow: 'hidden',
     borderRadius: 8,
   },
@@ -606,11 +609,11 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: 'rgba(255,255,255,0.6)',
     borderRadius: NODE_SIZE / 2,
-    backgroundColor: theme.colors.primary,
+    backgroundColor: t.colors.primary,
   },
   // Glows when a bench player is selected and the slot is empty
   slotDropTarget: {
-    borderColor: theme.colors.accent,
+    borderColor: t.colors.accent,
     borderWidth: 2,
     borderRadius: NODE_SIZE / 2,
     backgroundColor: 'rgba(255,193,7,0.25)',
@@ -643,7 +646,7 @@ const styles = StyleSheet.create({
     width: 48,
     height: 48,
     borderRadius: 24,
-    backgroundColor: theme.colors.primary,
+    backgroundColor: t.colors.primary,
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 2,
@@ -675,7 +678,7 @@ const styles = StyleSheet.create({
     width: NODE_SIZE,
     height: NODE_SIZE,
     borderRadius: NODE_SIZE / 2,
-    backgroundColor: theme.colors.primary,
+    backgroundColor: t.colors.primary,
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 2,
@@ -691,16 +694,16 @@ const styles = StyleSheet.create({
   // ── FABs
   fabStack: {
     position: 'absolute',
-    bottom: theme.spacing.md,
-    right: theme.spacing.md,
+    bottom: t.spacing.md,
+    right: t.spacing.md,
     flexDirection: 'column',
     alignItems: 'flex-end',
-    gap: theme.spacing.sm,
+    gap: t.spacing.sm,
   },
   fab: {
-    backgroundColor: theme.colors.primary,
+    backgroundColor: t.colors.primary,
     borderRadius: 28,
-    paddingHorizontal: theme.spacing.md,
+    paddingHorizontal: t.spacing.md,
     paddingVertical: 10,
     flexDirection: 'row',
     alignItems: 'center',
@@ -722,28 +725,28 @@ const styles = StyleSheet.create({
 
   // ── Bench
   bench: {
-    backgroundColor: theme.colors.card,
+    backgroundColor: t.colors.card,
     borderTopWidth: 1,
-    borderTopColor: theme.colors.border,
+    borderTopColor: t.colors.border,
     minHeight: 90,
-    paddingBottom: theme.spacing.sm,
+    paddingBottom: t.spacing.sm,
   },
   benchHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: theme.spacing.md,
-    paddingTop: theme.spacing.sm,
+    paddingHorizontal: t.spacing.md,
+    paddingTop: t.spacing.sm,
     paddingBottom: 4,
   },
   benchLabel: {
     fontSize: 13,
-    color: theme.colors.text,
+    color: t.colors.text,
     opacity: 0.8,
   },
   benchCount: {
     fontWeight: 'bold',
-    color: theme.colors.primary,
+    color: t.colors.primary,
   },
   benchFull: { color: '#15803d' },
   clearBtn: {
@@ -754,10 +757,10 @@ const styles = StyleSheet.create({
   },
   clearBtnText: {
     fontSize: 12,
-    color: theme.colors.border,
+    color: t.colors.border,
   },
   benchScrollContent: {
-    paddingHorizontal: theme.spacing.sm,
+    paddingHorizontal: t.spacing.sm,
     paddingVertical: 4,
     alignItems: 'center',
   },
@@ -766,36 +769,36 @@ const styles = StyleSheet.create({
     width: 50,
     height: 50,
     borderRadius: 25,
-    backgroundColor: theme.colors.card,
+    backgroundColor: t.colors.card,
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 2,
-    borderColor: theme.colors.primary,
+    borderColor: t.colors.primary,
     marginHorizontal: 4,
     elevation: 2,
   },
   // Selected bench player gets an accent ring + slight scale
   benchNodeSelected: {
-    backgroundColor: theme.colors.accent,
-    borderColor: theme.colors.primary,
+    backgroundColor: t.colors.accent,
+    borderColor: t.colors.primary,
     borderWidth: 3,
     transform: [{ scale: 1.12 }],
   },
   benchInitials: {
-    color: theme.colors.primary,
+    color: t.colors.primary,
     fontWeight: 'bold',
     fontSize: 13,
     lineHeight: 15,
   },
   benchJersey: {
-    color: theme.colors.text,
+    color: t.colors.text,
     fontSize: 9,
     lineHeight: 11,
     opacity: 0.6,
   },
   benchEmpty: {
     height: 50,
-    paddingHorizontal: theme.spacing.md,
+    paddingHorizontal: t.spacing.md,
     justifyContent: 'center',
   },
   benchEmptyText: {

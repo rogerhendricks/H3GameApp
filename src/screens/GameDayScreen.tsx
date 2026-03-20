@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity } from 'react-native';
 import { Player } from '../models/Player';
 import { getPlayers } from '../database';
 import { useNavigation } from '@react-navigation/native';
-import { theme } from '../theme';
+import { useTheme } from '../context/ThemeContext';
+import { AppTheme } from '../theme';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import Icon from 'react-native-vector-icons/Ionicons';
 import { GameFormat } from './TacticsBoardScreen';
@@ -26,15 +27,24 @@ type GameFlowStackParamList = {
 type GameDayScreenNavigationProp = NativeStackNavigationProp<GameFlowStackParamList, 'GameDay'>;
 
 // ── Defined outside the component so it is never recreated on re-render ──
-const EmptyRoster = () => (
-  <View style={styles.emptyContainer}>
-    <Icon name="people-outline" size={52} color={theme.colors.border} />
-    <Text style={styles.emptyText}>No players on the roster</Text>
-    <Text style={styles.emptySubText}>Go to the Roster tab to add players first.</Text>
-  </View>
-);
+const EmptyRoster = () => {
+  const { theme } = useTheme();
+  return (
+    <View style={{ alignItems: 'center', marginTop: theme.spacing.xl, paddingHorizontal: theme.spacing.lg }}>
+      <Icon name="people-outline" size={52} color={theme.colors.border} />
+      <Text style={{ fontSize: 18, fontWeight: '700', color: theme.colors.text, marginTop: theme.spacing.md }}>
+        No players on the roster
+      </Text>
+      <Text style={{ fontSize: 14, color: theme.colors.text, opacity: 0.5, marginTop: theme.spacing.xs, textAlign: 'center' }}>
+        Go to the Roster tab to add players first.
+      </Text>
+    </View>
+  );
+};
 
 const GameDayScreen = () => {
+  const { theme } = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const navigation = useNavigation<GameDayScreenNavigationProp>();
   const [roster, setRoster] = useState<Player[]>([]);
   const [activePlayers, setActivePlayers] = useState<string[]>([]);
@@ -164,7 +174,7 @@ const GameDayScreen = () => {
               <Icon
                 name={isActive ? 'checkmark-circle' : 'ellipse-outline'}
                 size={24}
-                color={isActive ? '#FFFFFF' : theme.colors.border}
+                color={isActive ? '#FFFFFF' : styles.iconBorderColor.color}
               />
             </TouchableOpacity>
           );
@@ -186,7 +196,7 @@ const GameDayScreen = () => {
           <Icon
             name="american-football-outline"
             size={18}
-            color={canProceed ? '#FFFFFF' : theme.colors.card}
+            color={canProceed ? '#FFFFFF' : styles.iconCardColor.color}
           />
           <Text style={[styles.proceedButtonText, !canProceed && styles.proceedButtonTextDisabled]}>
             {canProceed
@@ -200,10 +210,14 @@ const GameDayScreen = () => {
   );
 };
 
-const styles = StyleSheet.create({
+const makeStyles = (t: AppTheme) => StyleSheet.create({
+  // Hidden-colour helpers so dynamic colours can be consumed via styles.X.color
+  iconBorderColor: { color: t.colors.border },
+  iconCardColor: { color: t.colors.card },
+
   container: {
     flex: 1,
-    backgroundColor: theme.colors.background,
+    backgroundColor: t.colors.background,
   },
 
   // ── Header
@@ -211,14 +225,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-end',
-    paddingHorizontal: theme.spacing.md,
-    paddingTop: theme.spacing.md,
-    paddingBottom: theme.spacing.xs,
+    paddingHorizontal: t.spacing.md,
+    paddingTop: t.spacing.md,
+    paddingBottom: t.spacing.xs,
   },
   sectionLabel: {
     fontSize: 12,
     fontWeight: '700',
-    color: theme.colors.text,
+    color: t.colors.text,
     opacity: 0.45,
     textTransform: 'uppercase',
     letterSpacing: 0.8,
@@ -226,48 +240,48 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 26,
     fontWeight: '700',
-    color: theme.colors.text,
+    color: t.colors.text,
   },
   selectAllBtn: {
     paddingVertical: 6,
     paddingHorizontal: 10,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: theme.colors.primary,
+    borderColor: t.colors.primary,
   },
   selectAllText: {
     fontSize: 13,
     fontWeight: '600',
-    color: theme.colors.primary,
+    color: t.colors.primary,
   },
 
   helperText: {
     fontSize: 13,
-    color: theme.colors.text,
+    color: t.colors.text,
     opacity: 0.55,
-    paddingHorizontal: theme.spacing.md,
-    paddingBottom: theme.spacing.sm,
+    paddingHorizontal: t.spacing.md,
+    paddingBottom: t.spacing.sm,
   },
   helperCount: {
     fontWeight: '700',
     opacity: 1,
-    color: theme.colors.primary,
+    color: t.colors.primary,
   },
 
   // ── List
   listContent: {
-    paddingHorizontal: theme.spacing.md,
-    paddingBottom: theme.spacing.sm,
+    paddingHorizontal: t.spacing.md,
+    paddingBottom: t.spacing.sm,
   },
 
   playerItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: theme.colors.card,
-    paddingVertical: theme.spacing.sm,
-    paddingHorizontal: theme.spacing.sm,
+    backgroundColor: t.colors.card,
+    paddingVertical: t.spacing.sm,
+    paddingHorizontal: t.spacing.sm,
     borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
+    borderBottomColor: t.colors.border,
   },
   playerItemFirst: {
     borderTopLeftRadius: 12,
@@ -279,7 +293,7 @@ const styles = StyleSheet.create({
     borderBottomRightRadius: 12,
   },
   activePlayer: {
-    backgroundColor: theme.colors.primary,
+    backgroundColor: t.colors.primary,
     borderBottomColor: 'rgba(255,255,255,0.15)',
   },
 
@@ -288,12 +302,12 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: theme.colors.background,
+    backgroundColor: t.colors.background,
     borderWidth: 1.5,
-    borderColor: theme.colors.primary,
+    borderColor: t.colors.primary,
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: theme.spacing.sm,
+    marginRight: t.spacing.sm,
   },
   jerseyBadgeActive: {
     backgroundColor: 'rgba(255,255,255,0.2)',
@@ -302,7 +316,7 @@ const styles = StyleSheet.create({
   jerseyBadgeText: {
     fontSize: 11,
     fontWeight: '700',
-    color: theme.colors.primary,
+    color: t.colors.primary,
   },
   jerseyBadgeTextActive: {
     color: '#FFFFFF',
@@ -314,14 +328,14 @@ const styles = StyleSheet.create({
   playerName: {
     fontSize: 15,
     fontWeight: '600',
-    color: theme.colors.text,
+    color: t.colors.text,
   },
   playerNameActive: {
     color: '#FFFFFF',
   },
   playerPosition: {
     fontSize: 13,
-    color: theme.colors.text,
+    color: t.colors.text,
     opacity: 0.55,
     marginTop: 1,
   },
@@ -330,56 +344,36 @@ const styles = StyleSheet.create({
     opacity: 1,
   },
 
-  // ── Empty state
-  emptyContainer: {
-    alignItems: 'center',
-    marginTop: theme.spacing.xl,
-    paddingHorizontal: theme.spacing.lg,
-  },
-  emptyText: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: theme.colors.text,
-    marginTop: theme.spacing.md,
-  },
-  emptySubText: {
-    fontSize: 14,
-    color: theme.colors.text,
-    opacity: 0.5,
-    marginTop: theme.spacing.xs,
-    textAlign: 'center',
-  },
-
   // ── Footer
   footer: {
-    padding: theme.spacing.md,
-    paddingTop: theme.spacing.sm,
-    backgroundColor: theme.colors.background,
+    padding: t.spacing.md,
+    paddingTop: t.spacing.sm,
+    backgroundColor: t.colors.background,
   },
   footerHint: {
     fontSize: 12,
-    color: theme.colors.text,
+    color: t.colors.text,
     opacity: 0.45,
     textAlign: 'center',
-    marginBottom: theme.spacing.xs,
+    marginBottom: t.spacing.xs,
   },
   proceedButton: {
-    backgroundColor: theme.colors.primary,
+    backgroundColor: t.colors.primary,
     paddingVertical: 14,
-    paddingHorizontal: theme.spacing.md,
+    paddingHorizontal: t.spacing.md,
     borderRadius: 12,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: theme.spacing.sm,
+    gap: t.spacing.sm,
     elevation: 4,
-    shadowColor: theme.colors.primary,
+    shadowColor: t.colors.primary,
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.3,
     shadowRadius: 5,
   },
   proceedButtonDisabled: {
-    backgroundColor: theme.colors.border,
+    backgroundColor: t.colors.border,
     elevation: 0,
     shadowOpacity: 0,
   },
@@ -389,21 +383,21 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
   },
   proceedButtonTextDisabled: {
-    color: theme.colors.card,
+    color: t.colors.card,
   },
 
   // ── Format selector
   formatRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: theme.spacing.md,
-    paddingBottom: theme.spacing.sm,
-    gap: theme.spacing.sm,
+    paddingHorizontal: t.spacing.md,
+    paddingBottom: t.spacing.sm,
+    gap: t.spacing.sm,
   },
   formatLabel: {
     fontSize: 12,
     fontWeight: '700',
-    color: theme.colors.text,
+    color: t.colors.text,
     opacity: 0.45,
     textTransform: 'uppercase',
     letterSpacing: 0.6,
@@ -411,24 +405,24 @@ const styles = StyleSheet.create({
   },
   formatChips: {
     flexDirection: 'row',
-    gap: theme.spacing.xs,
+    gap: t.spacing.xs,
   },
   formatChip: {
     paddingHorizontal: 16,
     paddingVertical: 7,
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.background,
+    borderColor: t.colors.border,
+    backgroundColor: t.colors.background,
   },
   formatChipActive: {
-    backgroundColor: theme.colors.primary,
-    borderColor: theme.colors.primary,
+    backgroundColor: t.colors.primary,
+    borderColor: t.colors.primary,
   },
   formatChipText: {
     fontSize: 13,
     fontWeight: '600',
-    color: theme.colors.text,
+    color: t.colors.text,
   },
   formatChipTextActive: {
     color: '#FFFFFF',
@@ -436,4 +430,3 @@ const styles = StyleSheet.create({
 });
 
 export default GameDayScreen;
-

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -19,7 +19,8 @@ import { useNavigation, CompositeNavigationProp } from '@react-navigation/native
 import { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import Icon from 'react-native-vector-icons/Ionicons';
-import { theme } from '../theme';
+import { useTheme } from '../context/ThemeContext';
+import { AppTheme } from '../theme';
 
 type RootStackParamList = {
   TeamRoster: undefined;
@@ -89,6 +90,8 @@ interface PositionPickerProps {
 }
 
 const PositionPicker = ({ value, onSelect, placeholder, optional = false }: PositionPickerProps) => {
+  const { theme } = useTheme();
+  const pickerStyles = useMemo(() => makePickerStyles(theme), [theme]);
   const [visible, setVisible] = useState(false);
   const selected = ALL_POSITIONS.find(p => p.value === value);
 
@@ -165,37 +168,37 @@ const PositionPicker = ({ value, onSelect, placeholder, optional = false }: Posi
   );
 };
 
-const pickerStyles = StyleSheet.create({
+const makePickerStyles = (t: AppTheme) => StyleSheet.create({
   trigger: {
     height: 42,
-    borderColor: theme.colors.border,
+    borderColor: t.colors.border,
     borderWidth: 1,
-    marginBottom: theme.spacing.sm,
-    paddingHorizontal: theme.spacing.sm,
+    marginBottom: t.spacing.sm,
+    paddingHorizontal: t.spacing.sm,
     borderRadius: 8,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: theme.colors.background,
+    backgroundColor: t.colors.background,
   },
   triggerText: {
     fontSize: 15,
-    color: theme.colors.text,
+    color: t.colors.text,
     flex: 1,
   },
   triggerPlaceholder: {
-    color: theme.colors.border,
+    color: t.colors.border,
   },
   modalRoot: {
     flex: 1,
     justifyContent: 'flex-end',
   },
   sheet: {
-    backgroundColor: theme.colors.card,
+    backgroundColor: t.colors.card,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    padding: theme.spacing.md,
-    paddingBottom: theme.spacing.xl,
+    padding: t.spacing.md,
+    paddingBottom: t.spacing.xl,
     maxHeight: '75%',
     elevation: 12,
     shadowColor: '#000',
@@ -206,70 +209,79 @@ const pickerStyles = StyleSheet.create({
   sheetHandle: {
     width: 40,
     height: 4,
-    backgroundColor: theme.colors.border,
+    backgroundColor: t.colors.border,
     borderRadius: 2,
     alignSelf: 'center',
-    marginBottom: theme.spacing.md,
+    marginBottom: t.spacing.md,
   },
   sheetTitle: {
     fontSize: 16,
     fontWeight: '700',
-    color: theme.colors.text,
-    marginBottom: theme.spacing.sm,
+    color: t.colors.text,
+    marginBottom: t.spacing.sm,
   },
   categoryHeader: {
     fontSize: 11,
     fontWeight: '700',
-    color: theme.colors.text,
+    color: t.colors.text,
     opacity: 0.4,
     textTransform: 'uppercase',
     letterSpacing: 0.8,
-    paddingHorizontal: theme.spacing.sm,
-    paddingTop: theme.spacing.sm,
+    paddingHorizontal: t.spacing.sm,
+    paddingTop: t.spacing.sm,
     paddingBottom: 4,
   },
   optionRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: theme.spacing.sm,
+    paddingHorizontal: t.spacing.sm,
     paddingVertical: 12,
     borderRadius: 8,
-    gap: theme.spacing.sm,
+    gap: t.spacing.sm,
   },
   optionRowSelected: {
-    backgroundColor: `${theme.colors.primary}18`,
+    backgroundColor: `${t.colors.primary}18`,
   },
   optionLabel: {
     fontSize: 14,
     fontWeight: '700',
-    color: theme.colors.text,
+    color: t.colors.text,
     minWidth: 44,
   },
   optionLabelSelected: {
-    color: theme.colors.primary,
+    color: t.colors.primary,
   },
   optionDesc: {
     fontSize: 14,
-    color: theme.colors.text,
+    color: t.colors.text,
     opacity: 0.6,
     flex: 1,
   },
   optionDescSelected: {
-    color: theme.colors.primary,
+    color: t.colors.primary,
     opacity: 0.85,
   },
 });
 
 // ── Defined outside the component so it is never recreated on re-render ──
-const EmptyRoster = () => (
-  <View style={styles.emptyContainer}>
-    <Icon name="people-outline" size={52} color={theme.colors.border} />
-    <Text style={styles.emptyText}>No players yet</Text>
-    <Text style={styles.emptySubText}>Fill in the form above to add your first player.</Text>
-  </View>
-);
+const EmptyRoster = () => {
+  const { theme } = useTheme();
+  return (
+    <View style={{ alignItems: 'center', marginTop: theme.spacing.xl, paddingHorizontal: theme.spacing.lg }}>
+      <Icon name="people-outline" size={52} color={theme.colors.border} />
+      <Text style={{ fontSize: 18, fontWeight: '700', color: theme.colors.text, marginTop: theme.spacing.md }}>
+        No players yet
+      </Text>
+      <Text style={{ fontSize: 14, color: theme.colors.text, opacity: 0.5, marginTop: theme.spacing.xs, textAlign: 'center' }}>
+        Fill in the form above to add your first player.
+      </Text>
+    </View>
+  );
+};
 
 const TeamRosterScreen = () => {
+  const { theme } = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
   const navigation = useNavigation<TeamRosterScreenNavigationProp>();
   const [players, setPlayers] = useState<Player[]>([]);
   const [name, setName] = useState('');
@@ -584,20 +596,20 @@ const TeamRosterScreen = () => {
   );
 };
 
-const styles = StyleSheet.create({
+const makeStyles = (t: AppTheme) => StyleSheet.create({
   flex: { flex: 1 },
 
   container: {
     flex: 1,
-    backgroundColor: theme.colors.background,
+    backgroundColor: t.colors.background,
   },
 
   // ── Add Player Form
   formCard: {
-    backgroundColor: theme.colors.card,
-    margin: theme.spacing.md,
+    backgroundColor: t.colors.card,
+    margin: t.spacing.md,
     borderRadius: 12,
-    padding: theme.spacing.md,
+    padding: t.spacing.md,
     elevation: 2,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
@@ -607,45 +619,45 @@ const styles = StyleSheet.create({
   formTitle: {
     fontSize: 13,
     fontWeight: '700',
-    color: theme.colors.text,
+    color: t.colors.text,
     opacity: 0.5,
     textTransform: 'uppercase',
     letterSpacing: 0.8,
-    marginBottom: theme.spacing.sm,
+    marginBottom: t.spacing.sm,
   },
   inputLabel: {
     fontSize: 13,
     fontWeight: '600',
-    color: theme.colors.text,
+    color: t.colors.text,
     marginBottom: 4,
     marginTop: 2,
   },
   required: {
-    color: theme.colors.danger,
+    color: t.colors.danger,
   },
   optional: {
     fontWeight: '400',
-    color: theme.colors.border,
+    color: t.colors.border,
   },
   input: {
     height: 42,
-    borderColor: theme.colors.border,
+    borderColor: t.colors.border,
     borderWidth: 1,
-    marginBottom: theme.spacing.sm,
-    paddingHorizontal: theme.spacing.sm,
+    marginBottom: t.spacing.sm,
+    paddingHorizontal: t.spacing.sm,
     borderRadius: 8,
-    color: theme.colors.text,
-    backgroundColor: theme.colors.background,
+    color: t.colors.text,
+    backgroundColor: t.colors.background,
     fontSize: 15,
   },
   addButton: {
-    backgroundColor: theme.colors.primary,
+    backgroundColor: t.colors.primary,
     borderRadius: 8,
     paddingVertical: 11,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: theme.spacing.xs,
+    gap: t.spacing.xs,
     marginTop: 4,
   },
   addButtonDisabled: {
@@ -659,32 +671,32 @@ const styles = StyleSheet.create({
 
   // ── List header
   listHeader: {
-    paddingHorizontal: theme.spacing.md + theme.spacing.xs,
-    paddingBottom: theme.spacing.xs,
+    paddingHorizontal: t.spacing.md + t.spacing.xs,
+    paddingBottom: t.spacing.xs,
   },
   listHeaderText: {
     fontSize: 12,
     fontWeight: '700',
-    color: theme.colors.text,
+    color: t.colors.text,
     opacity: 0.45,
     textTransform: 'uppercase',
     letterSpacing: 0.8,
   },
 
   listContent: {
-    paddingHorizontal: theme.spacing.md,
-    paddingBottom: theme.spacing.xl,
+    paddingHorizontal: t.spacing.md,
+    paddingBottom: t.spacing.xl,
   },
 
   // ── Player rows
   playerItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: theme.colors.card,
-    paddingVertical: theme.spacing.sm,
-    paddingHorizontal: theme.spacing.sm,
+    backgroundColor: t.colors.card,
+    paddingVertical: t.spacing.sm,
+    paddingHorizontal: t.spacing.sm,
     borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
+    borderBottomColor: t.colors.border,
   },
   // Rounded top corners on first item
   playerItemFirst: {
@@ -703,17 +715,17 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: theme.colors.background,
+    backgroundColor: t.colors.background,
     borderWidth: 1.5,
-    borderColor: theme.colors.primary,
+    borderColor: t.colors.primary,
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: theme.spacing.sm,
+    marginRight: t.spacing.sm,
   },
   jerseyBadgeText: {
     fontSize: 12,
     fontWeight: '700',
-    color: theme.colors.primary,
+    color: t.colors.primary,
   },
 
   playerInfo: {
@@ -722,11 +734,11 @@ const styles = StyleSheet.create({
   playerName: {
     fontSize: 15,
     fontWeight: '600',
-    color: theme.colors.text,
+    color: t.colors.text,
   },
   playerPosition: {
     fontSize: 13,
-    color: theme.colors.text,
+    color: t.colors.text,
     opacity: 0.55,
     marginTop: 1,
   },
@@ -735,26 +747,26 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   iconButton: {
-    padding: theme.spacing.sm,
+    padding: t.spacing.sm,
   },
 
   // ── Empty state
   emptyContainer: {
     alignItems: 'center',
-    marginTop: theme.spacing.xl,
-    paddingHorizontal: theme.spacing.lg,
+    marginTop: t.spacing.xl,
+    paddingHorizontal: t.spacing.lg,
   },
   emptyText: {
     fontSize: 18,
     fontWeight: '700',
-    color: theme.colors.text,
-    marginTop: theme.spacing.md,
+    color: t.colors.text,
+    marginTop: t.spacing.md,
   },
   emptySubText: {
     fontSize: 14,
-    color: theme.colors.text,
+    color: t.colors.text,
     opacity: 0.5,
-    marginTop: theme.spacing.xs,
+    marginTop: t.spacing.xs,
     textAlign: 'center',
   },
 
@@ -766,11 +778,11 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   modalContainer: {
-    backgroundColor: theme.colors.card,
+    backgroundColor: t.colors.card,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    padding: theme.spacing.md,
-    paddingBottom: theme.spacing.xl,
+    padding: t.spacing.md,
+    paddingBottom: t.spacing.xl,
     elevation: 12,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: -3 },
@@ -780,21 +792,21 @@ const styles = StyleSheet.create({
   dragHandle: {
     width: 40,
     height: 4,
-    backgroundColor: theme.colors.border,
+    backgroundColor: t.colors.border,
     borderRadius: 2,
     alignSelf: 'center',
-    marginBottom: theme.spacing.md,
+    marginBottom: t.spacing.md,
   },
   modalTitle: {
     fontSize: 20,
     fontWeight: '700',
-    color: theme.colors.text,
-    marginBottom: theme.spacing.md,
+    color: t.colors.text,
+    marginBottom: t.spacing.md,
   },
   modalActions: {
     flexDirection: 'row',
-    gap: theme.spacing.sm,
-    marginTop: theme.spacing.sm,
+    gap: t.spacing.sm,
+    marginTop: t.spacing.sm,
   },
   modalButton: {
     flex: 1,
@@ -803,17 +815,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   cancelButton: {
-    backgroundColor: theme.colors.background,
+    backgroundColor: t.colors.background,
     borderWidth: 1,
-    borderColor: theme.colors.border,
+    borderColor: t.colors.border,
   },
   cancelButtonText: {
     fontSize: 15,
     fontWeight: '600',
-    color: theme.colors.text,
+    color: t.colors.text,
   },
   saveButton: {
-    backgroundColor: theme.colors.primary,
+    backgroundColor: t.colors.primary,
   },
   saveButtonDisabled: {
     opacity: 0.45,
