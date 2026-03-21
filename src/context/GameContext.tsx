@@ -40,10 +40,15 @@ export interface GameContextValue {
   gameTime: number;
   isActive: boolean;
   timerInterval: TimerInterval;
+  /** Seconds since the last substitution or start of match */
+  rotationTime: number;
   setTimerInterval: (v: TimerInterval) => void;
   handleStart: () => void;
   handleStop: () => void;
-  handleReset: () => void;
+  /** Resets the rotation timer and advances to the next column */
+  handleResetRotation: () => void;
+  /** Resets the entire game */
+  handleResetGame: () => void;
 
   // ── Interval / column navigation ──
   /** Timer-driven column index (read-only) */
@@ -62,6 +67,8 @@ export interface GameContextValue {
    */
   assignedPlayers: { [slotIndex: string]: SlotAssignment };
   unassignedPlayers: Player[];
+  /** The IDs of players who were subbed OFF in the most recent action */
+  lastSubbedOffIds: string[];
   setSquad: (
     assigned: { [slotIndex: string]: SlotAssignment },
     unassigned: Player[]
@@ -124,10 +131,8 @@ function buildInitialStatus(
   allPlayers.forEach(p => {
     if (seen.has(p.id)) return;
     seen.add(p.id);
-    status[p.id] = Array(numIntervals).fill('off');
-    if (onFieldIds.has(p.id)) {
-      status[p.id][0] = 'on';
-    }
+    // Fill the ENTIRE array with the initial status
+    status[p.id] = Array(numIntervals).fill(onFieldIds.has(p.id) ? 'on' : 'off');
   });
 
   return status;
@@ -141,6 +146,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // ── Timer ──
   const [gameTime, setGameTime] = useState(0);
   const [isActive, setIsActive] = useState(false);
+  const [rotationTime, setRotationTime] = useState(0);
   const [timerInterval, setTimerIntervalState] = useState<TimerInterval>(600);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -159,6 +165,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     [slotIndex: string]: SlotAssignment;
   }>({});
   const [unassignedPlayers, setUnassignedPlayers] = useState<Player[]>([]);
+  const [lastSubbedOffIds, setLastSubbedOffIds] = useState<string[]>([]);
 
   // ── Player status matrix ──
   const [playerStatus, setPlayerStatus] = useState<{
@@ -185,12 +192,17 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
             return GAME_DURATION;
           }
           const next = prev + 1;
+          
+          setRotationTime(r => r + 1);
 
           // Detect interval boundary
           if (next % timerInterval === 0 && next < GAME_DURATION) {
             const crossedInterval = Math.floor(next / timerInterval);
             if (crossedInterval > lastAlertedIntervalRef.current) {
               lastAlertedIntervalRef.current = crossedInterval;
+              
+              setRotationTime(0); // Reset rotation timer
+              
               // Alert is fired outside the tick via setTimeout to avoid
               // calling setState (setIsActive) inside another setState updater.
               setTimeout(() => {
@@ -254,79 +266,90 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     []
   );
 
-  // ── Toggle a single cell ──
+  // ── Advance to next rotation ──
+  const handleResetRotation = useCallback(() => {
+    setRotationTime(0);
+    setDisplayInterval(prev => Math.min(prev + 1, numIntervals - 1));
+    setLastSubbedOffIds([]);
+  }, [numIntervals]);
+
+  // ── Toggle a single cell and propagate to the end ──
   const toggleStatus = useCallback(
     (playerId: string, intervalIndex: number) => {
       setPlayerStatus(prev => {
         const updated = { ...prev, [playerId]: [...(prev[playerId] ?? [])] };
-        updated[playerId][intervalIndex] =
-          updated[playerId][intervalIndex] === 'on' ? 'off' : 'on';
+        const newStatus = updated[playerId][intervalIndex] === 'on' ? 'off' : 'on';
+        
+        // Propagate change to all future columns
+        for (let i = intervalIndex; i < updated[playerId].length; i++) {
+          updated[playerId][i] = newStatus;
+        }
+
+        if (newStatus === 'off') {
+          setLastSubbedOffIds([playerId]);
+        }
         return updated;
       });
+      setRotationTime(0);
     },
     []
   );
 
-  // ── Execute a substitution from displayInterval onwards ──
+  // ── Execute a substitution ──
   const executeSubstitution = useCallback(
     (benchPlayerId: string, fieldPlayerId: string) => {
-      const playerToField =
-        unassignedPlayers.find(p => p.id === benchPlayerId) ?? null;
-      const playerToBench =
-        Object.values(assignedPlayers)
-          .map(s => s.player)
-          .find(p => p?.id === fieldPlayerId) ?? null;
-
-      if (!playerToField || !playerToBench) {
-        console.warn('Substitution failed: player not found');
-        return;
-      }
+      const targetInterval = displayInterval;
 
       setPlayerStatus(prev => {
         const updated = { ...prev };
-        const bench = [...(prev[benchPlayerId] ?? [])];
-        const field = [...(prev[fieldPlayerId] ?? [])];
-
-        // From displayInterval onwards: bench goes 'on', field goes 'off'
-        for (let i = displayInterval; i < bench.length; i++) {
-          bench[i] = 'on';
-          field[i] = 'off';
+        if (benchPlayerId && updated[benchPlayerId]) {
+          const arr = [...updated[benchPlayerId]];
+          for (let i = targetInterval; i < arr.length; i++) arr[i] = 'on';
+          updated[benchPlayerId] = arr;
         }
-        updated[benchPlayerId] = bench;
-        updated[fieldPlayerId] = field;
+        if (fieldPlayerId && updated[fieldPlayerId]) {
+          const arr = [...updated[fieldPlayerId]];
+          for (let i = targetInterval; i < arr.length; i++) arr[i] = 'off';
+          updated[fieldPlayerId] = arr;
+        }
         return updated;
       });
 
-      // Move bench player onto field in assignedPlayers, field player to bench
+      if (fieldPlayerId) {
+        setLastSubbedOffIds(prev => [...prev, fieldPlayerId]);
+      }
+
       setAssignedPlayersState(prev => {
         const updated = { ...prev };
-        // Find the slot occupied by the field player
-        const slotEntry = Object.entries(updated).find(
-          ([, s]) => s.player?.id === fieldPlayerId
-        );
+        const playerToField = unassignedPlayers.find(p => p.id === benchPlayerId) || null;
+        const slotEntry = Object.entries(updated).find(([, s]) => s.player?.id === fieldPlayerId);
         if (slotEntry) {
-          const slotKey = slotEntry[0];
-          const positionLabel = slotEntry[1].positionLabel;
-          updated[slotKey] = { player: playerToField, positionLabel };
+          updated[slotEntry[0]] = { player: playerToField, positionLabel: slotEntry[1].positionLabel };
         }
         return updated;
       });
 
       setUnassignedPlayers(prev => {
+        const playerToBench = Object.values(assignedPlayers).find(s => s.player?.id === fieldPlayerId)?.player;
         const filtered = prev.filter(p => p.id !== benchPlayerId);
-        return [...filtered, playerToBench];
+        return playerToBench ? [...filtered, playerToBench] : filtered;
       });
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [displayInterval, assignedPlayers, unassignedPlayers]
+    [displayInterval, unassignedPlayers, assignedPlayers]
   );
 
   // ── Timer controls ──
-  const handleStart = useCallback(() => setIsActive(true), []);
+  const handleStart = useCallback(() => {
+    setIsActive(true);
+    setLastSubbedOffIds([]); // Clear recovering list when match/rotation starts
+    if (gameTime === 0) setRotationTime(0);
+  }, [gameTime]);
+
   const handleStop = useCallback(() => setIsActive(false), []);
-  const handleReset = useCallback(() => {
+  const handleResetGame = useCallback(() => {
     setIsActive(false);
     setGameTime(0);
+    setRotationTime(0);
     setDisplayInterval(0);
     lastAlertedIntervalRef.current = -1;
   }, []);
@@ -353,6 +376,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
           onPress: () => {
             setIsActive(false);
             setGameTime(0);
+            setRotationTime(0);
             setDisplayInterval(0);
             setHomeScore(0);
             setAwayScore(0);
@@ -374,10 +398,12 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         gameTime,
         isActive,
         timerInterval,
+        rotationTime,
         setTimerInterval,
         handleStart,
         handleStop,
-        handleReset,
+        handleResetRotation,
+        handleResetGame,
         currentInterval,
         displayInterval,
         numIntervals,
@@ -386,6 +412,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         retreatDisplayInterval,
         assignedPlayers,
         unassignedPlayers,
+        lastSubbedOffIds,
         setSquad,
         playerStatus,
         toggleStatus,
