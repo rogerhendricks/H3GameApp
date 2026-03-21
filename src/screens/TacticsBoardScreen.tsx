@@ -1,8 +1,11 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput, Dimensions } from 'react-native';
 import { RouteProp, useNavigation } from '@react-navigation/native';
 import { GestureHandlerRootView, GestureDetector, Gesture } from 'react-native-gesture-handler';
-import Animated, { useSharedValue, useAnimatedStyle, runOnJS } from 'react-native-reanimated';
+import Animated, { useSharedValue, useAnimatedStyle, runOnJS, useDerivedValue, useAnimatedProps } from 'react-native-reanimated';
+import { Svg, Line, Polygon, Defs, Marker } from 'react-native-svg';
+
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 import { Player } from '../models/Player';
 import { getPlayers } from '../database';
@@ -52,56 +55,56 @@ const FORMATIONS: Record<GameFormat, Record<string, FormationPosition[]>> = {
   '11v11': {
     '4-4-2': [
       { top: '85%', left: '42%', label: 'GK' },
-      { top: '70%', left: '10%', label: 'RB' }, { top: '70%', left: '30%', label: 'CB' },
-      { top: '70%', left: '55%', label: 'CB' }, { top: '70%', left: '75%', label: 'LB' },
-      { top: '45%', left: '10%', label: 'RM' }, { top: '45%', left: '30%', label: 'CM' },
-      { top: '45%', left: '55%', label: 'CM' }, { top: '45%', left: '75%', label: 'LM' },
-      { top: '20%', left: '30%', label: 'ST' }, { top: '20%', left: '55%', label: 'ST' },
+      { top: '70%', left: '75%', label: 'RB' }, { top: '70%', left: '55%', label: 'CB' },
+      { top: '70%', left: '30%', label: 'CB' }, { top: '70%', left: '10%', label: 'LB' },
+      { top: '45%', left: '75%', label: 'RM' }, { top: '45%', left: '55%', label: 'CM' },
+      { top: '45%', left: '30%', label: 'CM' }, { top: '45%', left: '10%', label: 'LM' },
+      { top: '20%', left: '55%', label: 'ST' }, { top: '20%', left: '30%', label: 'ST' },
     ],
     '4-3-3': [
       { top: '85%', left: '42%', label: 'GK' },
-      { top: '70%', left: '10%', label: 'RB' }, { top: '70%', left: '30%', label: 'CB' },
-      { top: '70%', left: '55%', label: 'CB' }, { top: '70%', left: '75%', label: 'LB' },
-      { top: '45%', left: '20%', label: 'CM' }, { top: '50%', left: '42%', label: 'CM' },
-      { top: '45%', left: '65%', label: 'CM' },
-      { top: '25%', left: '15%', label: 'RW' }, { top: '20%', left: '42%', label: 'ST' },
-      { top: '25%', left: '70%', label: 'LW' },
+      { top: '70%', left: '75%', label: 'RB' }, { top: '70%', left: '55%', label: 'CB' },
+      { top: '70%', left: '30%', label: 'CB' }, { top: '70%', left: '10%', label: 'LB' },
+      { top: '45%', left: '65%', label: 'CM' }, { top: '50%', left: '42%', label: 'CM' },
+      { top: '45%', left: '20%', label: 'CM' },
+      { top: '25%', left: '70%', label: 'RW' }, { top: '20%', left: '42%', label: 'ST' },
+      { top: '25%', left: '15%', label: 'LW' },
     ],
     '4-2-3-1': [
       { top: '85%', left: '42%', label: 'GK' },
-      { top: '70%', left: '10%', label: 'RB' }, { top: '70%', left: '30%', label: 'CB' },
-      { top: '70%', left: '55%', label: 'CB' }, { top: '70%', left: '75%', label: 'LB' },
-      { top: '55%', left: '30%', label: 'CDM' }, { top: '55%', left: '55%', label: 'CDM' },
-      { top: '35%', left: '15%', label: 'RAM' }, { top: '35%', left: '42%', label: 'CAM' },
-      { top: '35%', left: '70%', label: 'LAM' },
+      { top: '70%', left: '75%', label: 'RB' }, { top: '70%', left: '55%', label: 'CB' },
+      { top: '70%', left: '30%', label: 'CB' }, { top: '70%', left: '10%', label: 'LB' },
+      { top: '55%', left: '55%', label: 'CDM' }, { top: '55%', left: '30%', label: 'CDM' },
+      { top: '35%', left: '70%', label: 'RAM' }, { top: '35%', left: '42%', label: 'CAM' },
+      { top: '35%', left: '15%', label: 'LAM' },
       { top: '15%', left: '42%', label: 'ST' },
     ],
     '3-5-2': [
       { top: '85%', left: '42%', label: 'GK' },
-      { top: '70%', left: '20%', label: 'CB' }, { top: '75%', left: '42%', label: 'CB' },
-      { top: '70%', left: '65%', label: 'CB' },
-      { top: '50%', left: '5%',  label: 'RM' }, { top: '45%', left: '25%', label: 'CM' },
-      { top: '50%', left: '42%', label: 'CM' }, { top: '45%', left: '60%', label: 'CM' },
-      { top: '50%', left: '80%', label: 'LM' },
-      { top: '20%', left: '30%', label: 'ST' }, { top: '20%', left: '55%', label: 'ST' },
+      { top: '70%', left: '65%', label: 'CB' }, { top: '75%', left: '42%', label: 'CB' },
+      { top: '70%', left: '20%', label: 'CB' },
+      { top: '50%', left: '80%', label: 'RM' }, { top: '45%', left: '60%', label: 'CM' },
+      { top: '50%', left: '42%', label: 'CM' }, { top: '45%', left: '25%', label: 'CM' },
+      { top: '50%', left: '5%',  label: 'LM' },
+      { top: '20%', left: '55%', label: 'ST' }, { top: '20%', left: '30%', label: 'ST' },
     ],
     '4-5-1': [
       { top: '85%', left: '42%', label: 'GK' },
-      { top: '70%', left: '10%', label: 'RB' }, { top: '70%', left: '30%', label: 'CB' },
-      { top: '70%', left: '55%', label: 'CB' }, { top: '70%', left: '75%', label: 'LB' },
-      { top: '45%', left: '5%',  label: 'RM' }, { top: '50%', left: '25%', label: 'CM' },
-      { top: '45%', left: '42%', label: 'CM' }, { top: '50%', left: '60%', label: 'CM' },
-      { top: '45%', left: '80%', label: 'LM' },
+      { top: '70%', left: '75%', label: 'RB' }, { top: '70%', left: '55%', label: 'CB' },
+      { top: '70%', left: '30%', label: 'CB' }, { top: '70%', left: '10%', label: 'LB' },
+      { top: '45%', left: '80%', label: 'RM' }, { top: '50%', left: '60%', label: 'CM' },
+      { top: '45%', left: '42%', label: 'CM' }, { top: '50%', left: '25%', label: 'CM' },
+      { top: '45%', left: '5%',  label: 'LM' },
       { top: '20%', left: '42%', label: 'ST' },
     ],
     '3-4-3': [
       { top: '85%', left: '42%', label: 'GK' },
-      { top: '70%', left: '20%', label: 'CB' }, { top: '75%', left: '42%', label: 'CB' },
-      { top: '70%', left: '65%', label: 'CB' },
-      { top: '50%', left: '10%', label: 'RM' }, { top: '50%', left: '30%', label: 'CM' },
-      { top: '50%', left: '55%', label: 'CM' }, { top: '50%', left: '75%', label: 'LM' },
-      { top: '25%', left: '15%', label: 'RW' }, { top: '20%', left: '42%', label: 'ST' },
-      { top: '25%', left: '70%', label: 'LW' },
+      { top: '70%', left: '65%', label: 'CB' }, { top: '75%', left: '42%', label: 'CB' },
+      { top: '70%', left: '20%', label: 'CB' },
+      { top: '50%', left: '75%', label: 'RM' }, { top: '50%', left: '55%', label: 'CM' },
+      { top: '50%', left: '30%', label: 'CM' }, { top: '50%', left: '10%', label: 'LM' },
+      { top: '25%', left: '70%', label: 'RW' }, { top: '20%', left: '42%', label: 'ST' },
+      { top: '25%', left: '15%', label: 'LW' },
     ],
   },
 
@@ -109,27 +112,27 @@ const FORMATIONS: Record<GameFormat, Record<string, FormationPosition[]>> = {
   '9v9': {
     '3-3-2': [
       { top: '85%', left: '42%', label: 'GK' },
-      { top: '68%', left: '15%', label: 'RB' }, { top: '68%', left: '42%', label: 'CB' }, { top: '68%', left: '70%', label: 'LB' },
-      { top: '45%', left: '15%', label: 'RM' }, { top: '45%', left: '42%', label: 'CM' }, { top: '45%', left: '70%', label: 'LM' },
-      { top: '20%', left: '28%', label: 'ST' }, { top: '20%', left: '57%', label: 'ST' },
+      { top: '68%', left: '70%', label: 'RB' }, { top: '68%', left: '42%', label: 'CB' }, { top: '68%', left: '15%', label: 'LB' },
+      { top: '45%', left: '70%', label: 'RM' }, { top: '45%', left: '42%', label: 'CM' }, { top: '45%', left: '15%', label: 'LM' },
+      { top: '20%', left: '57%', label: 'ST' }, { top: '20%', left: '28%', label: 'ST' },
     ],
     '2-4-2': [
       { top: '85%', left: '42%', label: 'GK' },
-      { top: '70%', left: '25%', label: 'CB' }, { top: '70%', left: '60%', label: 'CB' },
-      { top: '47%', left: '8%',  label: 'RM' }, { top: '47%', left: '28%', label: 'CM' }, { top: '47%', left: '55%', label: 'CM' }, { top: '47%', left: '75%', label: 'LM' },
-      { top: '20%', left: '28%', label: 'ST' }, { top: '20%', left: '57%', label: 'ST' },
+      { top: '70%', left: '60%', label: 'CB' }, { top: '70%', left: '25%', label: 'CB' },
+      { top: '47%', left: '75%', label: 'RM' }, { top: '47%', left: '55%', label: 'CM' }, { top: '47%', left: '28%', label: 'CM' }, { top: '47%', left: '8%',  label: 'LM' },
+      { top: '20%', left: '57%', label: 'ST' }, { top: '20%', left: '28%', label: 'ST' },
     ],
     '3-2-3': [
       { top: '85%', left: '42%', label: 'GK' },
-      { top: '68%', left: '15%', label: 'RB' }, { top: '68%', left: '42%', label: 'CB' }, { top: '68%', left: '70%', label: 'LB' },
-      { top: '47%', left: '28%', label: 'CM' }, { top: '47%', left: '57%', label: 'CM' },
-      { top: '20%', left: '15%', label: 'RW' }, { top: '20%', left: '42%', label: 'ST' }, { top: '20%', left: '70%', label: 'LW' },
+      { top: '68%', left: '70%', label: 'RB' }, { top: '68%', left: '42%', label: 'CB' }, { top: '68%', left: '15%', label: 'LB' },
+      { top: '47%', left: '57%', label: 'CM' }, { top: '47%', left: '28%', label: 'CM' },
+      { top: '20%', left: '70%', label: 'RW' }, { top: '20%', left: '42%', label: 'ST' }, { top: '20%', left: '15%', label: 'LW' },
     ],
     '2-3-3': [
       { top: '85%', left: '42%', label: 'GK' },
-      { top: '70%', left: '25%', label: 'CB' }, { top: '70%', left: '60%', label: 'CB' },
-      { top: '46%', left: '15%', label: 'RM' }, { top: '46%', left: '42%', label: 'CM' }, { top: '46%', left: '70%', label: 'LM' },
-      { top: '22%', left: '15%', label: 'RW' }, { top: '22%', left: '42%', label: 'ST' }, { top: '22%', left: '70%', label: 'LW' },
+      { top: '70%', left: '60%', label: 'CB' }, { top: '70%', left: '25%', label: 'CB' },
+      { top: '46%', left: '70%', label: 'RM' }, { top: '46%', left: '42%', label: 'CM' }, { top: '46%', left: '15%', label: 'LM' },
+      { top: '22%', left: '70%', label: 'RW' }, { top: '22%', left: '42%', label: 'ST' }, { top: '22%', left: '15%', label: 'LW' },
     ],
   },
 
@@ -137,27 +140,27 @@ const FORMATIONS: Record<GameFormat, Record<string, FormationPosition[]>> = {
   '7v7': {
     '2-3-1': [
       { top: '85%', left: '42%', label: 'GK' },
-      { top: '65%', left: '25%', label: 'CB' }, { top: '65%', left: '62%', label: 'CB' },
-      { top: '42%', left: '12%', label: 'RM' }, { top: '42%', left: '42%', label: 'CM' }, { top: '42%', left: '73%', label: 'LM' },
+      { top: '65%', left: '62%', label: 'CB' }, { top: '65%', left: '25%', label: 'CB' },
+      { top: '42%', left: '73%', label: 'RM' }, { top: '42%', left: '42%', label: 'CM' }, { top: '42%', left: '12%', label: 'LM' },
       { top: '18%', left: '42%', label: 'ST' },
     ],
     '3-2-1': [
       { top: '85%', left: '42%', label: 'GK' },
-      { top: '65%', left: '15%', label: 'RB' }, { top: '68%', left: '42%', label: 'CB' }, { top: '65%', left: '70%', label: 'LB' },
-      { top: '42%', left: '28%', label: 'CM' }, { top: '42%', left: '57%', label: 'CM' },
+      { top: '65%', left: '70%', label: 'RB' }, { top: '68%', left: '42%', label: 'CB' }, { top: '65%', left: '15%', label: 'LB' },
+      { top: '42%', left: '57%', label: 'CM' }, { top: '42%', left: '28%', label: 'CM' },
       { top: '18%', left: '42%', label: 'ST' },
     ],
     '2-2-2': [
       { top: '85%', left: '42%', label: 'GK' },
-      { top: '65%', left: '25%', label: 'CB' }, { top: '65%', left: '62%', label: 'CB' },
-      { top: '45%', left: '28%', label: 'CM' }, { top: '45%', left: '57%', label: 'CM' },
-      { top: '22%', left: '28%', label: 'ST' }, { top: '22%', left: '57%', label: 'ST' },
+      { top: '65%', left: '62%', label: 'CB' }, { top: '65%', left: '25%', label: 'CB' },
+      { top: '45%', left: '57%', label: 'CM' }, { top: '45%', left: '28%', label: 'CM' },
+      { top: '22%', left: '57%', label: 'ST' }, { top: '22%', left: '28%', label: 'ST' },
     ],
     '1-3-2': [
       { top: '85%', left: '42%', label: 'GK' },
       { top: '65%', left: '42%', label: 'CB' },
-      { top: '46%', left: '12%', label: 'RM' }, { top: '46%', left: '42%', label: 'CM' }, { top: '46%', left: '73%', label: 'LM' },
-      { top: '20%', left: '28%', label: 'ST' }, { top: '20%', left: '57%', label: 'ST' },
+      { top: '46%', left: '73%', label: 'RM' }, { top: '46%', left: '42%', label: 'CM' }, { top: '46%', left: '12%', label: 'LM' },
+      { top: '20%', left: '57%', label: 'ST' }, { top: '20%', left: '28%', label: 'ST' },
     ],
   },
 };
@@ -180,6 +183,7 @@ const TacticsBoardScreen = ({ route }: Props) => {
   const [ghostInfo, setGhostInfo] = useState<{ player: Player; isGK: boolean } | null>(null);
   const [draggingSlotIndex, setDraggingSlotIndex] = useState<number | null>(null);
   const [draggingBenchPlayerId, setDraggingBenchPlayerId] = useState<string | null>(null);
+  const [draggingPlayerInfo, setDraggingPlayerInfo] = useState<Player | null>(null);
   const [hoveredSlotIndex, setHoveredSlotIndex] = useState<number | null>(null);
 
   // ── Shared values (readable on the UI thread) ──
@@ -188,6 +192,8 @@ const TacticsBoardScreen = ({ route }: Props) => {
   const isDragging = useSharedValue(0);
   const rootOffsetX = useSharedValue(0);
   const rootOffsetY = useSharedValue(0);
+  const fieldAbsX = useSharedValue(0);
+  const fieldAbsY = useSharedValue(0);
 
   // ── JS-thread refs ──
   const fieldRef = useRef<View>(null);
@@ -334,21 +340,23 @@ const TacticsBoardScreen = ({ route }: Props) => {
 
   // ── Drag start ──
   const onDragStart = useCallback((id: string | number) => {
+    let p: Player | undefined;
     if (typeof id === 'number') {
       // Dragging from field
-      const player = assignedPlayers[id];
-      if (!player) return;
+      p = assignedPlayers[id] ?? undefined;
+      if (!p) return;
       dragSourceIndexRef.current = id;
-      setGhostInfo({ player, isGK: id === 0 });
+      setGhostInfo({ player: p, isGK: id === 0 });
       setDraggingSlotIndex(id);
     } else {
       // Dragging from bench
-      const player = unassignedPlayers.find(p => p.id === id);
-      if (!player) return;
-      dragSourceBenchPlayerIdRef.current = id;
-      setGhostInfo({ player, isGK: false });
-      setDraggingBenchPlayerId(id);
+      p = unassignedPlayers.find(player => player.id === id);
+      if (!p) return;
+      dragSourceBenchPlayerIdRef.current = id as string;
+      setGhostInfo({ player: p, isGK: false });
+      setDraggingBenchPlayerId(id as string);
     }
+    setDraggingPlayerInfo(p || null);
     setSelectedBenchPlayer(null);
   }, [assignedPlayers, unassignedPlayers]);
 
@@ -396,6 +404,7 @@ const TacticsBoardScreen = ({ route }: Props) => {
     setGhostInfo(null);
     setDraggingSlotIndex(null);
     setDraggingBenchPlayerId(null);
+    setDraggingPlayerInfo(null);
     setHoveredSlotIndex(null);
 
     const isMatchActive = gameTime > 0 || isActive;
@@ -463,6 +472,7 @@ const TacticsBoardScreen = ({ route }: Props) => {
     setGhostInfo(null);
     setDraggingSlotIndex(null);
     setDraggingBenchPlayerId(null);
+    setDraggingPlayerInfo(null);
     setHoveredSlotIndex(null);
   }, []);
 
@@ -555,6 +565,56 @@ const TacticsBoardScreen = ({ route }: Props) => {
 
   const gameStarted = gameTime > 0 || isActive;
 
+  // ── Preferred Position Arrows Logic ──
+  const preferredArrows = useMemo(() => {
+    if (!draggingPlayerInfo) return [];
+    
+    const primary = draggingPlayerInfo.primaryPosition.trim().toUpperCase();
+    const secondary = draggingPlayerInfo.secondaryPosition?.trim().toUpperCase();
+    const currentFormation = FORMATIONS[format][formation] || [];
+    
+    const arrows: { targetX: number; targetY: number; color: string }[] = [];
+
+    // Helper to match positions with synonyms
+    const isMatch = (label: string, pref: string) => {
+      const l = label.toUpperCase();
+      const p = pref.toUpperCase();
+      if (l === p) return true;
+      // Common synonyms based on standard 11v11 positions
+      const syns: Record<string, string[]> = {
+        'ST': ['FORWARD', 'FW', 'STRIKER', 'ATTACKER', 'CF', 'CENTER FORWARD'],
+        'CF': ['ST', 'FORWARD', 'FW', 'STRIKER', 'ATTACKER', 'CENTER FORWARD'],
+        'GK': ['GOALIE', 'GOALKEEPER'],
+        'CB': ['DEFENDER', 'DF', 'CENTRE BACK', 'CENTER BACK'],
+        'RB': ['DEFENDER', 'DF', 'RIGHT BACK', 'RIGHT FULLBACK'],
+        'LB': ['DEFENDER', 'DF', 'LEFT BACK', 'LEFT FULLBACK'],
+        'CDM': ['MIDFIELDER', 'MF', 'DEFENSIVE MIDFIELDER', 'DM'],
+        'CM': ['MIDFIELDER', 'MF', 'CENTRE MID', 'CENTRAL MIDFIELDER'],
+        'CAM': ['MIDFIELDER', 'MF', 'ATTACKING MIDFIELDER', 'AM'],
+        'RAM': ['MIDFIELDER', 'MF', 'RIGHT ATTACKING MIDFIELDER'],
+        'LAM': ['MIDFIELDER', 'MF', 'LEFT ATTACKING MIDFIELDER'],
+        'RM': ['MIDFIELDER', 'MF', 'RIGHT MIDFIELDER', 'RW', 'RIGHT WINGER'],
+        'LM': ['MIDFIELDER', 'MF', 'LEFT MIDFIELDER', 'LW', 'LEFT WINGER'],
+        'RW': ['RM', 'RIGHT MIDFIELDER', 'RIGHT WINGER', 'FORWARD', 'ATTACKER'],
+        'LW': ['LM', 'LEFT MIDFIELDER', 'LEFT WINGER', 'FORWARD', 'ATTACKER'],
+      };
+      return syns[l]?.includes(p) || syns[p]?.includes(l);
+    };
+
+    currentFormation.forEach((pos, idx) => {
+      const layout = slotLayoutsRef.current[idx];
+      if (!layout) return;
+
+      if (isMatch(pos.label, primary)) {
+        arrows.push({ targetX: layout.x + layout.width / 2, targetY: layout.y + layout.height / 2, color: '#6366F1' });
+      } else if (secondary && isMatch(pos.label, secondary)) {
+        arrows.push({ targetX: layout.x + layout.width / 2, targetY: layout.y + layout.height / 2, color: '#F59E0B' });
+      }
+    });
+
+    return arrows;
+  }, [draggingPlayerInfo, formation, format]);
+
   const handlePlayPress = () => {
     if (!isActive && gameTime === 0) {
       // First time starting: Save the squad to context
@@ -582,7 +642,7 @@ const TacticsBoardScreen = ({ route }: Props) => {
         ref={rootRef}
         style={styles.container}
         onLayout={() => {
-          rootRef.current?.measure((_x, _y, _w, _h, px, py) => {
+          rootRef.current?.measureInWindow((px, py) => {
             rootOffsetX.value = px;
             rootOffsetY.value = py;
           });
@@ -711,12 +771,42 @@ const TacticsBoardScreen = ({ route }: Props) => {
           ref={fieldRef}
           style={styles.field}
           onLayout={() => {
-            fieldRef.current?.measure((_x, _y, _w, _h, pageX, pageY) => {
-              fieldPageRef.current = { x: pageX, y: pageY };
+            fieldRef.current?.measureInWindow((px, py) => {
+              fieldAbsX.value = px;
+              fieldAbsY.value = py;
+              fieldPageRef.current = { x: px, y: py };
             });
           }}
         >
           <FieldBackground />
+
+          {draggingPlayerInfo && (
+            <View style={StyleSheet.absoluteFill} pointerEvents="none">
+               <Svg height="100%" width="100%" style={styles.arrowSvg}>
+                  <Defs>
+                    <Marker id="headPrimary" orient="auto" markerWidth="6" markerHeight="6" refX="3" refY="3">
+                      <Polygon points="0,0 6,3 0,6" fill="#6366F1" />
+                    </Marker>
+                    <Marker id="headSecondary" orient="auto" markerWidth="6" markerHeight="6" refX="3" refY="3">
+                      <Polygon points="0,0 6,3 0,6" fill="#F59E0B" />
+                    </Marker>
+                  </Defs>
+                  {preferredArrows.map((arrow, idx) => (
+                    <GuidanceArrow 
+                      key={idx}
+                      ghostX={ghostX}
+                      ghostY={ghostY}
+                      fieldAbsX={fieldAbsX}
+                      fieldAbsY={fieldAbsY}
+                      targetX={arrow.targetX}
+                      targetY={arrow.targetY}
+                      color={arrow.color}
+                      markerId={arrow.color === '#6366F1' ? 'headPrimary' : 'headSecondary'}
+                    />
+                  ))}
+               </Svg>
+            </View>
+          )}
 
           {(FORMATIONS[format][formation] ?? []).map((pos, index) => {
             const player = assignedPlayers[index];
@@ -881,6 +971,30 @@ const TacticsBoardScreen = ({ route }: Props) => {
   );
 };
 
+const AnimatedLine = Animated.createAnimatedComponent(Line);
+
+/** Separate component for Arrows to avoid full TacticsBoard re-renders during animation */
+const GuidanceArrow = ({ ghostX, ghostY, fieldAbsX, fieldAbsY, targetX, targetY, color, markerId }: any) => {
+  const lineProps = useAnimatedProps(() => ({
+    x1: ghostX.value - fieldAbsX.value,
+    y1: ghostY.value - fieldAbsY.value,
+  }));
+
+  return (
+    <AnimatedLine
+      // @ts-ignore
+      animatedProps={lineProps}
+      x2={targetX}
+      y2={targetY}
+      stroke={color}
+      strokeWidth="2.5"
+      strokeDasharray="6,4"
+      opacity={0.9}
+      markerEnd={`url(#${markerId})`}
+    />
+  );
+};
+
 const makeStyles = (t: AppTheme) => StyleSheet.create({
   rootView: { flex: 1 },
   container: { flex: 1, backgroundColor: t.colors.background },
@@ -1022,6 +1136,9 @@ const makeStyles = (t: AppTheme) => StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.2,
     shadowRadius: 3,
+  },
+  arrowSvg: {
+    zIndex: 50,
   },
   playBtn: { backgroundColor: t.colors.primary },
   pauseBtn: { backgroundColor: t.colors.accent },
