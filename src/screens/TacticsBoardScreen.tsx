@@ -555,6 +555,27 @@ const TacticsBoardScreen = ({ route }: Props) => {
 
   const gameStarted = gameTime > 0 || isActive;
 
+  const handlePlayPress = () => {
+    if (!isActive && gameTime === 0) {
+      // First time starting: Save the squad to context
+      const formationPositions = FORMATIONS[format][formation] ?? [];
+      const slotAssignments: { [k: string]: import('../context/GameContext').SlotAssignment } = {};
+      formationPositions.forEach((pos, idx) => {
+        slotAssignments[String(idx)] = {
+          player: assignedPlayers[idx] ?? null,
+          positionLabel: pos.label,
+        };
+      });
+      setSquad(slotAssignments, unassignedPlayers);
+    }
+    
+    if (isActive) {
+      handleStop();
+    } else {
+      handleStart();
+    }
+  };
+
   return (
     <GestureHandlerRootView style={styles.rootView}>
       <View
@@ -660,7 +681,14 @@ const TacticsBoardScreen = ({ route }: Props) => {
 
             <View style={styles.headerActions}>
               <TouchableOpacity
-                onPress={isActive ? handleStop : handleStart}
+                onPress={() => navigation.navigate('SubstitutionMatrix')}
+                style={[styles.actionBtn, styles.logBtn]}
+              >
+                <Icon name="list" size={20} color="white" />
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={handlePlayPress}
                 style={[styles.actionBtn, isActive ? styles.pauseBtn : styles.playBtn]}
               >
                 <Icon name={isActive ? "pause" : "play"} size={20} color="white" />
@@ -763,54 +791,6 @@ const TacticsBoardScreen = ({ route }: Props) => {
               </GestureDetector>
             );
           })}
-
-          {/* FABs — bottom-right of field */}
-          <View style={styles.fabStack}>
-            <TouchableOpacity
-              style={[styles.fab, styles.fabSub]}
-              onPress={() => {
-                const formationPositions = FORMATIONS[format][formation] ?? [];
-                const slotAssignments: { [k: string]: import('../context/GameContext').SlotAssignment } = {};
-                formationPositions.forEach((pos, idx) => {
-                  slotAssignments[String(idx)] = {
-                    player: assignedPlayers[idx] ?? null,
-                    positionLabel: pos.label,
-                  };
-                });
-                setSquad(slotAssignments, unassignedPlayers);
-                navigation.navigate('SubstitutionMatrix');
-              }}
-              accessibilityRole="button"
-              accessibilityLabel="Go to substitution screen"
-            >
-              <Icon name="swap-horizontal" size={18} color="white" />
-              <Text style={styles.fabText}>Substitution</Text>
-            </TouchableOpacity>
-
-            {!isActive && gameTime === 0 && (
-              <TouchableOpacity
-                style={styles.fab}
-                onPress={() => {
-                  const formationPositions = FORMATIONS[format][formation] ?? [];
-                  const slotAssignments: { [k: string]: import('../context/GameContext').SlotAssignment } = {};
-                  formationPositions.forEach((pos, idx) => {
-                    slotAssignments[String(idx)] = {
-                      player: assignedPlayers[idx] ?? null,
-                      positionLabel: pos.label,
-                    };
-                  });
-                  setSquad(slotAssignments, unassignedPlayers);
-                  handleStart();
-                  navigation.navigate('SubstitutionMatrix');
-                }}
-                accessibilityRole="button"
-                accessibilityLabel="Start Game"
-              >
-                <Icon name="play" size={18} color="white" />
-                <Text style={styles.fabText}>Start</Text>
-              </TouchableOpacity>
-            )}
-          </View>
         </View>
 
         {/* ── Bench ── */}
@@ -1045,6 +1025,7 @@ const makeStyles = (t: AppTheme) => StyleSheet.create({
   },
   playBtn: { backgroundColor: t.colors.primary },
   pauseBtn: { backgroundColor: t.colors.accent },
+  logBtn: { backgroundColor: t.colors.border },
   nextRotationBtn: { backgroundColor: '#6366F1' },
 
   chip: {
